@@ -53,6 +53,20 @@ function godownRoutes(db) {
     catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // Customers
+  router.post('/customers', auth, requireAdmin, async (req, res) => {
+    try { res.json({ ok: true, id: await gb.addCustomer(db, req.body) }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  router.put('/customers/:id', auth, requireAdmin, async (req, res) => {
+    try { await gb.editCustomer(db, req.params.id, req.body); res.json({ ok: true }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  router.delete('/customers/:id', auth, requireAdmin, async (req, res) => {
+    try { await gb.deleteCustomer(db, req.params.id); res.json({ ok: true }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   return router;
 }
 
