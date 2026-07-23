@@ -42,7 +42,11 @@ async function addItem(db, item) {
   return rows[0].id;
 }
 async function addItemsBulk(db, items) {
-  for (const item of items) await addItem(db, item);
+  for (const item of items) {
+    const { rows } = await db.query(`SELECT id FROM items WHERE lower(code) = lower($1) LIMIT 1`, [item.code]);
+    if (rows.length) await editItem(db, rows[0].id, item);
+    else await addItem(db, item);
+  }
 }
 async function editItem(db, id, item) {
   await db.query(
@@ -156,6 +160,13 @@ async function addCustomer(db, c) {
   );
   return rows[0].id;
 }
+async function addCustomersBulk(db, customers) {
+  for (const c of customers) {
+    const { rows } = await db.query(`SELECT id FROM gb_customers WHERE lower(name) = lower($1) LIMIT 1`, [c.name]);
+    if (rows.length) await editCustomer(db, rows[0].id, c);
+    else await addCustomer(db, c);
+  }
+}
 async function editCustomer(db, id, c) {
   await db.query(
     `UPDATE gb_customers SET name=$2, phone=$3, area=$4, type=$5 WHERE id=$1`,
@@ -174,5 +185,5 @@ module.exports = {
   readAll, addItem, addItemsBulk, editItem,
   createBill, editBill, deleteBill, getBillRows, assertCanEditBill,
   addReceivedBills, markBillDispatched, deleteReceivedBill,
-  addCustomer, editCustomer, deleteCustomer,
+  addCustomer, editCustomer, deleteCustomer, addCustomersBulk,
 };
