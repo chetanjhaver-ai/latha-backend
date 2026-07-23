@@ -14,6 +14,7 @@ app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOStri
 app.use('/api/auth', authRoutes(db));
 app.use('/api/godown', require('./routes/godown')(db));
 app.use('/api/tasks', require('./routes/tasks')(db));
+app.use('/api/admin', require('./routes/admin')(db));
 
 // Basic housekeeping: clear out expired sessions periodically.
 setInterval(() => { cleanupExpiredSessions(db).catch(() => {}); }, 60 * 60 * 1000);
