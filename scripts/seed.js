@@ -10,6 +10,9 @@ const SEED_USERS = [
   { username: 'godown1', password: 'godown1123', name: 'Godown 1 Staff', email: 'godown1@store.com',        role: 'user',  warehouse: 'Godown 1' },
   { username: 'godown2', password: 'godown2123', name: 'Godown 2 Staff', email: 'godown2@store.com',        role: 'user',  warehouse: 'Godown 2' },
   { username: 'godown3', password: 'godown3123', name: 'Godown 3 Staff', email: 'godown3@store.com',        role: 'user',  warehouse: 'Godown 3' },
+  // Shared Call Attender login for the Complaint CRM — same admin account
+  // above handles admin access there too, so no separate admin user needed.
+  { username: 'attender', password: 'attender123', name: 'Call Attender', email: 'attender@store.com', role: 'user', warehouse: null },
 ];
 
 async function main() {
