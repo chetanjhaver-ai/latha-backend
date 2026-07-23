@@ -148,6 +148,24 @@ async function deleteReceivedBill(db, billId) {
   await db.query(`DELETE FROM gb_bills WHERE id = $1`, [billId]);
 }
 
+// ---- Customers ----
+async function addCustomer(db, c) {
+  const { rows } = await db.query(
+    `INSERT INTO gb_customers (name, phone, area, type) VALUES ($1,$2,$3,$4) RETURNING id`,
+    [c.name, c.phone || '', c.area || '', c.type || '']
+  );
+  return rows[0].id;
+}
+async function editCustomer(db, id, c) {
+  await db.query(
+    `UPDATE gb_customers SET name=$2, phone=$3, area=$4, type=$5 WHERE id=$1`,
+    [id, c.name, c.phone || '', c.area || '', c.type || '']
+  );
+}
+async function deleteCustomer(db, id) {
+  await db.query(`DELETE FROM gb_customers WHERE id = $1`, [id]);
+}
+
 function cryptoRandom() {
   return require('crypto').randomUUID();
 }
@@ -156,4 +174,5 @@ module.exports = {
   readAll, addItem, addItemsBulk, editItem,
   createBill, editBill, deleteBill, getBillRows, assertCanEditBill,
   addReceivedBills, markBillDispatched, deleteReceivedBill,
+  addCustomer, editCustomer, deleteCustomer,
 };
