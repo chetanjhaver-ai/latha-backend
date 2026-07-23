@@ -1,24 +1,40 @@
-// Godown Book's data operations — same rules as the Apps Script version
-// (v2), just backed by real Postgres tables and real sessions instead of
-// a shared key.
+// Godown Book's data operations — real Postgres tables, real sessions, and
+// (as of Phase 2b) every row scoped to a warehouse so godown1/godown2/godown3
+// staff each only ever see and write their own warehouse's data. Admin has
+// no warehouse restriction and can view/filter across all of them.
 
-async function readAll(db) {
+// warehouse === null/undefined means "no restriction" (admin viewing "All").
+async function readAll(db, warehouse) {
+  const w = warehouse || null;
   const [items, txns, log, bills, customers] = await Promise.all([
-    db.query(`SELECT id, code, name, brand, segment, subsegment, unit, opening, min_level FROM items ORDER BY created_at`),
-    db.query(`SELECT id, type, date, invoice, item_id, qty, party, remarks, bill_group, created_by, edited_at FROM gb_transactions ORDER BY created_at`),
-    db.query(`SELECT id, bill_group, invoice, edited_by, edited_at, changes, original FROM gb_edit_log ORDER BY edited_at`),
-    db.query(`SELECT id, bill_no, customer_name, qty, received_at, status, dispatched_at, outward_bill_group FROM gb_bills ORDER BY received_at`),
-    db.query(`SELECT id, name, phone, area, type FROM gb_customers ORDER BY name`),
+    db.query(
+      `SELECT id, code, name, brand, segment, subsegment, unit, opening, min_level, warehouse
+       FROM items WHERE ($1::text IS NULL OR warehouse = $1) ORDER BY created_at`, [w]),
+    db.query(
+      `SELECT id, type, date, invoice, item_id, qty, party, remarks, bill_group, created_by, edited_at, warehouse
+       FROM gb_transactions WHERE ($1::text IS NULL OR warehouse = $1) ORDER BY created_at`, [w]),
+    db.query(
+      `SELECT id, bill_group, invoice, edited_by, edited_at, changes, original
+       FROM gb_edit_log
+       WHERE ($1::text IS NULL OR bill_group IN (SELECT DISTINCT bill_group FROM gb_transactions WHERE warehouse = $1))
+       ORDER BY edited_at`, [w]),
+    db.query(
+      `SELECT id, bill_no, customer_name, qty, received_at, status, dispatched_at, outward_bill_group, warehouse
+       FROM gb_bills WHERE ($1::text IS NULL OR warehouse = $1) ORDER BY received_at`, [w]),
+    db.query(
+      `SELECT id, name, phone, area, type, warehouse
+       FROM gb_customers WHERE ($1::text IS NULL OR warehouse = $1) ORDER BY name`, [w]),
   ]);
   return {
     items: items.rows.map(r => ({
       id: r.id, code: r.code, name: r.name, brand: r.brand, segment: r.segment,
       subsegment: r.subsegment, unit: r.unit, opening: Number(r.opening), minLevel: Number(r.min_level),
+      warehouse: r.warehouse,
     })),
     transactions: txns.rows.map(r => ({
       id: r.id, type: r.type, date: r.date.toISOString().slice(0, 10), invoice: r.invoice,
       itemId: r.item_id, qty: Number(r.qty), party: r.party, remarks: r.remarks,
-      billGroup: r.bill_group, createdBy: r.created_by, editedAt: r.edited_at,
+      billGroup: r.bill_group, createdBy: r.created_by, editedAt: r.edited_at, warehouse: r.warehouse,
     })),
     editLog: log.rows.map(r => ({
       id: r.id, billGroup: r.bill_group, invoice: r.invoice, editedBy: r.edited_by,
@@ -26,29 +42,40 @@ async function readAll(db) {
     })),
     bills: bills.rows.map(r => ({
       id: r.id, billNo: r.bill_no, customerName: r.customer_name, qty: Number(r.qty),
-      receivedAt: r.received_at, status: r.status, dispatchedAt: r.dispatched_at, outwardBillGroup: r.outward_bill_group,
+      receivedAt: r.received_at, status: r.status, dispatchedAt: r.dispatched_at,
+      outwardBillGroup: r.outward_bill_group, warehouse: r.warehouse,
     })),
-    customers: customers.rows.map(r => ({ id: r.id, name: r.name, phone: r.phone, area: r.area, type: r.type })),
+    customers: customers.rows.map(r => ({
+      id: r.id, name: r.name, phone: r.phone, area: r.area, type: r.type, warehouse: r.warehouse,
+    })),
   };
 }
 
 // ---- Items (admin-only writes, enforced by requireAdmin middleware in the route) ----
 async function addItem(db, item) {
   const { rows } = await db.query(
-    `INSERT INTO items (code, name, brand, segment, subsegment, unit, opening, min_level)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [item.code, item.name, item.brand, item.segment, item.subsegment, item.unit, item.opening, item.minLevel]
+    `INSERT INTO items (code, name, brand, segment, subsegment, unit, opening, min_level, warehouse)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    [item.code, item.name, item.brand, item.segment, item.subsegment, item.unit, item.opening, item.minLevel, item.warehouse]
   );
   return rows[0].id;
 }
-async function addItemsBulk(db, items) {
+async function addItemsBulk(db, items, warehouse) {
   for (const item of items) {
-    const { rows } = await db.query(`SELECT id FROM items WHERE lower(code) = lower($1) LIMIT 1`, [item.code]);
-    if (rows.length) await editItem(db, rows[0].id, item);
-    else await addItem(db, item);
+    const withWarehouse = { ...item, warehouse: item.warehouse || warehouse };
+    // Match for upsert is scoped to the SAME warehouse — the same Code can
+    // legitimately exist as a different item in a different godown.
+    const { rows } = await db.query(
+      `SELECT id FROM items WHERE lower(code) = lower($1) AND warehouse = $2 LIMIT 1`,
+      [withWarehouse.code, withWarehouse.warehouse]
+    );
+    if (rows.length) await editItem(db, rows[0].id, withWarehouse);
+    else await addItem(db, withWarehouse);
   }
 }
 async function editItem(db, id, item) {
+  // Warehouse is intentionally not editable here — an item doesn't move
+  // between godowns via a data edit.
   await db.query(
     `UPDATE items SET name=$2, brand=$3, segment=$4, subsegment=$5, unit=$6, opening=$7, min_level=$8 WHERE id=$1`,
     [id, item.name, item.brand, item.segment, item.subsegment, item.unit, item.opening, item.minLevel]
@@ -74,14 +101,13 @@ function assertCanEditBill(user, rows) {
   }
 }
 
-async function createBill(db, user, { type, date, invoice, party, remarks, rows }) {
+async function createBill(db, user, { type, date, invoice, party, remarks, rows, warehouse }) {
   const billGroup = cryptoRandom();
-  const now = new Date();
   for (const r of rows) {
     await db.query(
-      `INSERT INTO gb_transactions (type, date, invoice, item_id, qty, party, remarks, bill_group, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [type, date, invoice, r.itemId, r.qty, party, remarks, billGroup, user.email]
+      `INSERT INTO gb_transactions (type, date, invoice, item_id, qty, party, remarks, bill_group, created_by, warehouse)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [type, date, invoice, r.itemId, r.qty, party, remarks, billGroup, user.email, warehouse]
     );
   }
   return billGroup;
@@ -99,12 +125,13 @@ async function editBill(db, user, billGroup, { date, invoice, party, remarks, ro
   );
 
   const createdBy = oldRows[0]?.created_by || user.email;
+  const warehouse = oldRows[0]?.warehouse; // a bill never changes warehouse via edit
   await db.query(`DELETE FROM gb_transactions WHERE bill_group = $1`, [billGroup]);
   for (const r of rows) {
     await db.query(
-      `INSERT INTO gb_transactions (type, date, invoice, item_id, qty, party, remarks, bill_group, created_by, edited_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())`,
-      [oldRows[0]?.type || 'IN', date, invoice, r.itemId, r.qty, party, remarks, billGroup, createdBy]
+      `INSERT INTO gb_transactions (type, date, invoice, item_id, qty, party, remarks, bill_group, created_by, edited_at, warehouse)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), $10)`,
+      [oldRows[0]?.type || 'IN', date, invoice, r.itemId, r.qty, party, remarks, billGroup, createdBy, warehouse]
     );
   }
 }
@@ -131,12 +158,12 @@ function buildChangeSummary(oldRows, next) {
 }
 
 // ---- Bills Received / Pending / Dispatched ----
-async function addReceivedBills(db, billRows) {
+async function addReceivedBills(db, billRows, warehouse) {
   const ids = [];
   for (const r of billRows) {
     const { rows } = await db.query(
-      `INSERT INTO gb_bills (bill_no, customer_name, qty, status) VALUES ($1,$2,$3,'Pending') RETURNING id`,
-      [r.billNo, r.customer, r.qty]
+      `INSERT INTO gb_bills (bill_no, customer_name, qty, status, warehouse) VALUES ($1,$2,$3,'Pending',$4) RETURNING id`,
+      [r.billNo, r.customer, r.qty, r.warehouse || warehouse]
     );
     ids.push(rows[0].id);
   }
@@ -155,16 +182,22 @@ async function deleteReceivedBill(db, billId) {
 // ---- Customers ----
 async function addCustomer(db, c) {
   const { rows } = await db.query(
-    `INSERT INTO gb_customers (name, phone, area, type) VALUES ($1,$2,$3,$4) RETURNING id`,
-    [c.name, c.phone || '', c.area || '', c.type || '']
+    `INSERT INTO gb_customers (name, phone, area, type, warehouse) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+    [c.name, c.phone || '', c.area || '', c.type || '', c.warehouse]
   );
   return rows[0].id;
 }
-async function addCustomersBulk(db, customers) {
+async function addCustomersBulk(db, customers, warehouse) {
   for (const c of customers) {
-    const { rows } = await db.query(`SELECT id FROM gb_customers WHERE lower(name) = lower($1) LIMIT 1`, [c.name]);
-    if (rows.length) await editCustomer(db, rows[0].id, c);
-    else await addCustomer(db, c);
+    const withWarehouse = { ...c, warehouse: c.warehouse || warehouse };
+    // Same-name customers in different godowns are different customers —
+    // match for upsert is scoped to the same warehouse.
+    const { rows } = await db.query(
+      `SELECT id FROM gb_customers WHERE lower(name) = lower($1) AND warehouse = $2 LIMIT 1`,
+      [withWarehouse.name, withWarehouse.warehouse]
+    );
+    if (rows.length) await editCustomer(db, rows[0].id, withWarehouse);
+    else await addCustomer(db, withWarehouse);
   }
 }
 async function editCustomer(db, id, c) {

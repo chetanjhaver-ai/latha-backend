@@ -28,7 +28,7 @@ async function login(db, username, password) {
   }
 
   const { rows } = await db.query(
-    `SELECT id, username, password_hash, password_salt, name, email, role, active
+    `SELECT id, username, password_hash, password_salt, name, email, role, active, warehouse
      FROM users WHERE username = $1`,
     [u]
   );
@@ -52,13 +52,14 @@ async function login(db, username, password) {
     role: user.role,
     name: user.name,
     email: user.email,
+    warehouse: user.warehouse,
   };
 }
 
 async function requireSession(db, token) {
   if (!token) return null;
   const { rows } = await db.query(
-    `SELECT s.token, s.expires_at, u.id AS user_id, u.username, u.role, u.name, u.email, u.active
+    `SELECT s.token, s.expires_at, u.id AS user_id, u.username, u.role, u.name, u.email, u.active, u.warehouse
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token = $1`,
     [token]
@@ -69,7 +70,7 @@ async function requireSession(db, token) {
     await db.query(`DELETE FROM sessions WHERE token = $1`, [token]);
     return null;
   }
-  return { userId: row.user_id, username: row.username, role: row.role, name: row.name, email: row.email };
+  return { userId: row.user_id, username: row.username, role: row.role, name: row.name, email: row.email, warehouse: row.warehouse };
 }
 
 async function logout(db, token) {
