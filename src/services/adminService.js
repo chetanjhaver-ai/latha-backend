@@ -53,14 +53,15 @@ async function listUsers(db) {
 async function createUser(db, { username, password, name, email, role, warehouse }) {
   const u = (username || '').trim().toLowerCase();
   if (!u || !password || !name) { const err = new Error('Username, password, and name are required.'); err.status = 400; throw err; }
-  if (role !== 'admin' && !warehouse) { const err = new Error('Non-admin users must be assigned a warehouse.'); err.status = 400; throw err; }
+  // Note: warehouse is optional — it only applies to Godown Book accounts.
+  // A non-admin account for another app (e.g. Complaint CRM) has none.
 
   const { hash, salt } = hashPassword(password);
   try {
     const { rows } = await db.query(
       `INSERT INTO users (username, password_hash, password_salt, name, email, role, warehouse)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [u, hash, salt, name, email || '', role || 'user', role === 'admin' ? null : warehouse]
+      [u, hash, salt, name, email || '', role || 'user', role === 'admin' ? null : (warehouse || null)]
     );
     return rows[0].id;
   } catch (e) {
@@ -70,12 +71,10 @@ async function createUser(db, { username, password, name, email, role, warehouse
 }
 
 async function updateUser(db, id, { name, email, role, warehouse, active, password }) {
-  if (role && role !== 'admin' && !warehouse) {
-    const err = new Error('Non-admin users must be assigned a warehouse.'); err.status = 400; throw err;
-  }
+  // Warehouse is optional here too, for the same reason as createUser above.
   await db.query(
     `UPDATE users SET name=$2, email=$3, role=$4, warehouse=$5, active=$6 WHERE id=$1`,
-    [id, name, email || '', role, role === 'admin' ? null : warehouse, active !== false]
+    [id, name, email || '', role, role === 'admin' ? null : (warehouse || null), active !== false]
   );
   if (password) {
     const { hash, salt } = hashPassword(password);
