@@ -58,6 +58,10 @@ function godownRoutes(db) {
     try { res.json({ ok: true, id: await gb.addCustomer(db, req.body) }); }
     catch (e) { res.status(500).json({ error: e.message }); }
   });
+  router.post('/customers/bulk', auth, requireAdmin, async (req, res) => {
+    try { await gb.addCustomersBulk(db, req.body.customers || []); res.json({ ok: true }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+  });
   router.put('/customers/:id', auth, requireAdmin, async (req, res) => {
     try { await gb.editCustomer(db, req.params.id, req.body); res.json({ ok: true }); }
     catch (e) { res.status(500).json({ error: e.message }); }
