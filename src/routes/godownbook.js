@@ -127,6 +127,19 @@ CREATE TABLE IF NOT EXISTS gdb_warehouses (
   name TEXT NOT NULL DEFAULT '',
   seq BIGSERIAL
 );
+CREATE TABLE IF NOT EXISTS gdb_errors (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL DEFAULT '',
+  bill_no TEXT NOT NULL DEFAULT '',
+  details_json TEXT NOT NULL DEFAULT '',
+  existing_bill_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'Open',
+  resolved_by TEXT NOT NULL DEFAULT '',
+  resolved_at TEXT NOT NULL DEFAULT '',
+  remarks TEXT NOT NULL DEFAULT '',
+  seq BIGSERIAL
+);
 CREATE TABLE IF NOT EXISTS gdb_ignored_bills (
   id TEXT PRIMARY KEY,
   prefix TEXT NOT NULL DEFAULT '',
@@ -151,6 +164,10 @@ const SHEETS = {
   Users:        { table: 'gdb_users',         cols: ['id','username','password','name','email','role','warehouse','active'] },
   Warehouses:   { table: 'gdb_warehouses',    cols: ['id','name'] },
   IgnoredBills: { table: 'gdb_ignored_bills', cols: ['id','prefix','num','bill_no','ignored_by','ignored_at','reason'] },
+  // The error register — every duplicate the system BLOCKS gets recorded
+  // here (instead of silently vanishing), so mistakes stay visible until
+  // an admin reviews and regularizes them.
+  Errors:       { table: 'gdb_errors',        cols: ['id','kind','bill_no','details_json','existing_bill_id','created_at','status','resolved_by','resolved_at','remarks'] },
 };
 
 const NUMERIC_COLS = new Set(['qty','opening','min_level','value','num']);
@@ -248,10 +265,40 @@ module.exports = function godownbookRoutes(db) {
         users: await readSheetRows(client, 'Users'),
         warehouses: await readSheetRows(client, 'Warehouses'),
         ignoredBills: await readSheetRows(client, 'IgnoredBills'),
+        errors: await readSheetRows(client, 'Errors'),
       };
     } finally {
       client.release();
     }
+  }
+
+  // Records a blocked duplicate in the error register. The error's ID is
+  // derived from the ATTEMPTED row's ID, so retries/re-runs of the same
+  // attempt never create a second error record (insertRowSafe skips on
+  // conflict). Bills columns: [id, billNo, customer, qty, receivedAt,
+  // status, ..., warehouse(9), value(10)].
+  async function logDuplicateError(client, kind, attemptedRow) {
+    const billNo = String(attemptedRow[1] || '');
+    let existingId = '';
+    try {
+      const ex = await client.query(
+        `SELECT id FROM gdb_bills WHERE UPPER(REPLACE(bill_no::text, ' ', '')) = $1 LIMIT 1`,
+        [normKey(billNo)]
+      );
+      if (ex.rowCount) existingId = String(ex.rows[0].id);
+    } catch (e) { /* lookup is best-effort */ }
+    const details = JSON.stringify({
+      billNo: billNo,
+      customer: String(attemptedRow[2] || ''),
+      qty: Number(attemptedRow[3]) || 0,
+      receivedAt: String(attemptedRow[4] || ''),
+      warehouse: String(attemptedRow[9] || ''),
+      value: Number(attemptedRow[10]) || 0,
+    });
+    await insertRowSafe(client, 'Errors', [
+      'err-' + String(attemptedRow[0]), kind, billNo, details, existingId,
+      new Date().toISOString(), 'Open', '', '', ''
+    ]);
   }
 
   async function opAppend(body) {
@@ -271,12 +318,21 @@ module.exports = function godownbookRoutes(db) {
             const keyExists = await client.query(
               `SELECT 1 FROM "${def.table}" WHERE UPPER(REPLACE("${colName}"::text, ' ', '')) = $1`, [key]
             );
-            if (keyExists.rowCount) { skipped++; continue; }
+            if (keyExists.rowCount) {
+              skipped++;
+              // A blocked duplicate BILL is a mistake worth reviewing, not
+              // just silently skipping — record it in the error register.
+              if (body.sheet === 'Bills') await logDuplicateError(client, 'Duplicate entry blocked', row);
+              continue;
+            }
           }
         }
         const ins = await insertRowSafe(client, body.sheet, row);
         if (ins.ok) added++;
-        else if (ins.code === '23505') skipped++; // unique_violation — DB-level bill-number guard
+        else if (ins.code === '23505') { // unique_violation — DB-level bill-number guard
+          skipped++;
+          if (body.sheet === 'Bills') await logDuplicateError(client, 'Duplicate entry blocked', row);
+        }
         else throw new Error(ins.message);
       }
       return { ok: true, added, skippedDuplicates: skipped };
@@ -373,6 +429,34 @@ module.exports = function godownbookRoutes(db) {
     });
   }
 
+  // Many row-updates in ONE call and one transaction — used by the app's
+  // "Upload Corrections" (bulk master cleanup). All rows apply together
+  // or, on error, none do.
+  async function opBatchUpdate(body) {
+    const def = SHEETS[body.sheet];
+    if (!def) return { error: 'unknown sheet: ' + body.sheet };
+    const updates = body.updates || [];
+    return withWriteLock(async (client) => {
+      let updated = 0; const notFound = [];
+      for (const u of updates) {
+        const vals = (u.values && u.values[0]) || [];
+        const sets = [];
+        const params = [];
+        vals.forEach((v, i) => {
+          const col = def.cols[u.startCol + i];
+          if (!col) return;
+          params.push(coerce(col, v));
+          sets.push(`"${col}" = $${params.length}`);
+        });
+        if (!sets.length) continue;
+        params.push(String(u.id));
+        const r = await client.query(`UPDATE "${def.table}" SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+        if (r.rowCount) updated++; else notFound.push(u.id);
+      }
+      return { ok: true, updated, notFound };
+    });
+  }
+
   async function opClearWhere(body) {
     const def = SHEETS[body.sheet];
     if (!def) return { error: 'unknown sheet: ' + body.sheet };
@@ -443,7 +527,13 @@ module.exports = function godownbookRoutes(db) {
           if (ins.ok) added++;
           else if (ins.code === '23505') {
             skipped++;
-            if (sheetName === 'Bills') duplicateBillsSkipped.push(String(row[1]));
+            if (sheetName === 'Bills') {
+              duplicateBillsSkipped.push(String(row[1]));
+              // Record the skipped copy — full details — in the error
+              // register so it can be reviewed and regularized rather
+              // than just ignored. Idempotent across migration re-runs.
+              await logDuplicateError(client, 'Migration duplicate', row);
+            }
           } else {
             throw new Error(sheetName + ' row ' + String(row[0]) + ': ' + ins.message);
           }
@@ -500,6 +590,7 @@ module.exports = function godownbookRoutes(db) {
         case 'saveNewInward': return res.json(await opSaveNewInward(body));
         case 'saveEditedDelivery': return res.json(await opSaveEditedDelivery(body));
         case 'updateRange': return res.json(await opUpdateRange(body));
+        case 'batchUpdate': return res.json(await opBatchUpdate(body));
         case 'clearWhere': return res.json(await opClearWhere(body));
         case 'clearAllRows': return res.json(await opClearAllRows(body));
         case 'migrateFromSheets': return res.json(await opMigrateFromSheets(body));
