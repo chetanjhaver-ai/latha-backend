@@ -1,0 +1,91 @@
+# NIGHTLY DATABASE BACKUP — GitHub Actions (free)
+#
+# Every night at 3:00 AM IST, GitHub's servers connect to the Render
+# database, take a complete snapshot of EVERYTHING in it (GodownBook,
+# complaints, old wms archive — all tables), and store it as a downloadable
+# file kept for 30 days. Completely independent of Render, so even in the
+# worst case (account issue, deleted database, billing lapse) there is
+# always a copy elsewhere. Costs nothing.
+#
+# ── SETUP (one time, ~3 minutes) ──
+# 1. In GitHub, open the latha-backend repo → Settings → Secrets and
+#    variables → Actions → "New repository secret".
+#      Name:  DATABASE_URL
+#      Value: the EXTERNAL Database URL from Render (database page →
+#             Connections → External Database URL — the long postgres://
+#             line). Must be External, not Internal.
+# 2. In the repo, click Add file → Create new file, and type this exact
+#    path as the name (the slashes create the folders):
+#        .github/workflows/db-backup.yml
+#    Paste this whole file in, and Commit.
+# 3. Test it immediately: repo → Actions tab → "Nightly database backup"
+#    → "Run workflow" button → wait ~1 minute → the run shows a green
+#    tick and a "database-backup-…" file under Artifacts.
+#
+# ── RESTORING ──
+# First choice is Render's own recovery (database page → Recovery →
+# Restore Database — pick a date/time, Render creates a NEW instance with
+# the old data; verify it, then point the web service's DATABASE_URL at
+# it). Use these nightly files when you need to go back further than
+# Render's window, or if Render itself is unavailable:
+#   1. Download the artifact from the Actions run of the date you want,
+#      and unzip it to get godownbook_YYYY-MM-DD.dump
+#   2. Restore into a fresh/empty database:
+#        pg_restore --clean --if-exists -d "<database url>" godownbook_YYYY-MM-DD.dump
+#   (Or send the .dump file to Claude and ask it to walk you through it.)
+
+name: Nightly database backup
+
+on:
+  schedule:
+    - cron: '30 21 * * *'   # 21:30 UTC = 3:00 AM IST daily
+  workflow_dispatch: {}      # adds the manual "Run workflow" button
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get repo files (for the Sheets mirror script)
+        uses: actions/checkout@v4
+
+      - name: Dump the entire database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not set — add it in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          FILE="godownbook_$(date -u -d '+5 hours +30 minutes' +%F).dump"
+          pg_dump "$DATABASE_URL" --format=custom --no-owner --file="$FILE"
+          echo "Backup created:"
+          ls -lh "$FILE"
+          # Sanity check — a suspiciously tiny dump means something is wrong.
+          SIZE=$(stat -c%s "$FILE")
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "::error::Dump is unexpectedly small ($SIZE bytes) — investigate before trusting this backup."
+            exit 1
+          fi
+
+      - name: Store the backup (kept 30 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-backup-${{ github.run_number }}
+          path: "*.dump"
+          retention-days: 30
+
+      # LAYER 3 — mirror everything into the readable backup Google Sheet.
+      # Skips quietly (with a notice) if the two GAS_BACKUP_* secrets
+      # aren't configured yet, so the .dump backup above never depends on it.
+      - name: Mirror to Google Sheets (readable backup)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GAS_BACKUP_URL: ${{ secrets.GAS_BACKUP_URL }}
+          GAS_BACKUP_KEY: ${{ secrets.GAS_BACKUP_KEY }}
+        run: |
+          if [ -z "$GAS_BACKUP_URL" ] || [ -z "$GAS_BACKUP_KEY" ]; then
+            echo "::warning::GAS_BACKUP_URL / GAS_BACKUP_KEY secrets not set — Google Sheets mirror skipped (the .dump backup above still succeeded)."
+            exit 0
+          fi
+          npm install --no-audit --no-fund --silent
+          node scripts/backup_to_sheets.js
