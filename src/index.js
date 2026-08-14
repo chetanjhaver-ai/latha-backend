@@ -16,6 +16,11 @@ app.use('/api/godown', require('./routes/godown')(db));
 app.use('/api/tasks', require('./routes/tasks')(db));
 app.use('/api/admin', require('./routes/admin')(db));
 app.use('/api/complaints', require('./routes/complaints')(db));
+// GodownBook (new version, replaces the old wms/godown module for daily use).
+// Its tables are all prefixed gdb_ — fully separate from the old gb_* tables
+// (kept as frozen archive) and from the complaints app. Creates its own
+// tables on first boot; no migration run needed.
+app.use('/api/gbook', require('./routes/godownbook')(db));
 
 // Basic housekeeping: clear out expired sessions periodically.
 setInterval(() => { cleanupExpiredSessions(db).catch(() => {}); }, 60 * 60 * 1000);
