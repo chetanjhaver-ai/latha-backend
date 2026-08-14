@@ -48,6 +48,13 @@ jobs:
       - name: Get repo files (for the Sheets mirror script)
         uses: actions/checkout@v4
 
+      - name: Install PostgreSQL 18 client (matches the server's version)
+        run: |
+          sudo apt-get install -y -qq postgresql-common >/dev/null
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
+          sudo apt-get install -y -qq postgresql-client-18 >/dev/null
+          /usr/lib/postgresql/18/bin/pg_dump --version
+
       - name: Dump the entire database
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -57,7 +64,7 @@ jobs:
             exit 1
           fi
           FILE="godownbook_$(date -u -d '+5 hours +30 minutes' +%F).dump"
-          pg_dump "$DATABASE_URL" --format=custom --no-owner --file="$FILE"
+          /usr/lib/postgresql/18/bin/pg_dump "$DATABASE_URL" --format=custom --no-owner --file="$FILE"
           echo "Backup created:"
           ls -lh "$FILE"
           # Sanity check — a suspiciously tiny dump means something is wrong.
