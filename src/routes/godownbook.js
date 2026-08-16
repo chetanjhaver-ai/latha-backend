@@ -66,6 +66,24 @@ CREATE TABLE IF NOT EXISTS gdb_transactions (
   seq BIGSERIAL
 );
 CREATE INDEX IF NOT EXISTS gdb_transactions_bill_group_idx ON gdb_transactions (bill_group);
+-- Barcode (added later) — manufacturer barcode linked to each item, for
+-- scan-to-add during inward/outward entry.
+ALTER TABLE gdb_items ADD COLUMN IF NOT EXISTS barcode TEXT NOT NULL DEFAULT '';
+-- E-way bill number (added later) — mandatory for bills above the govt
+-- threshold before their outward delivery note can be saved/printed.
+ALTER TABLE gdb_bills ADD COLUMN IF NOT EXISTS eway_no TEXT NOT NULL DEFAULT '';
+-- Transport columns (added later) — who physically took an outward delivery.
+ALTER TABLE gdb_transactions ADD COLUMN IF NOT EXISTS driver TEXT NOT NULL DEFAULT '';
+ALTER TABLE gdb_transactions ADD COLUMN IF NOT EXISTS helpers TEXT NOT NULL DEFAULT '';
+-- Drivers & helpers master list.
+CREATE TABLE IF NOT EXISTS gdb_staff (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  seq BIGSERIAL
+);
 CREATE TABLE IF NOT EXISTS gdb_edit_log (
   id TEXT PRIMARY KEY,
   bill_group TEXT NOT NULL DEFAULT '',
@@ -155,10 +173,13 @@ CREATE TABLE IF NOT EXISTS gdb_ignored_bills (
 // Sheet-name → table mapping; column order matches the old Google Sheet
 // headers EXACTLY, because the app screen addresses columns by index.
 const SHEETS = {
-  Items:        { table: 'gdb_items',         cols: ['id','code','name','brand','segment','sub_segment','unit','opening','min_level'] },
-  Transactions: { table: 'gdb_transactions',  cols: ['id','type','date','invoice','item_id','qty','party','remarks','bill_group','created_by','edited_at','warehouse','supplier_invoice','delivery_ref'] },
+  Items:        { table: 'gdb_items',         cols: ['id','code','name','brand','segment','sub_segment','unit','opening','min_level','barcode'] },
+  // driver/helpers were added at the END of the column list on purpose —
+  // rows sent by older screens are simply shorter and land as '' for both,
+  // so nothing existing breaks.
+  Transactions: { table: 'gdb_transactions',  cols: ['id','type','date','invoice','item_id','qty','party','remarks','bill_group','created_by','edited_at','warehouse','supplier_invoice','delivery_ref','driver','helpers'] },
   EditLog:      { table: 'gdb_edit_log',      cols: ['id','bill_group','invoice','edited_by','edited_at','changes_json','original_json'] },
-  Bills:        { table: 'gdb_bills',         cols: ['id','bill_no','customer_name','qty','received_at','status','dispatched_at','outward_bill_group','items_json','warehouse','value'] },
+  Bills:        { table: 'gdb_bills',         cols: ['id','bill_no','customer_name','qty','received_at','status','dispatched_at','outward_bill_group','items_json','warehouse','value','eway_no'] },
   Customers:    { table: 'gdb_customers',     cols: ['id','name','phone','area','type','warehouse'] },
   DailySheets:  { table: 'gdb_daily_sheets',  cols: ['id','ref_no','date','bill_groups_json','saved_by','saved_at'] },
   Users:        { table: 'gdb_users',         cols: ['id','username','password','name','email','role','warehouse','active'] },
@@ -168,6 +189,8 @@ const SHEETS = {
   // here (instead of silently vanishing), so mistakes stay visible until
   // an admin reviews and regularizes them.
   Errors:       { table: 'gdb_errors',        cols: ['id','kind','bill_no','details_json','existing_bill_id','created_at','status','resolved_by','resolved_at','remarks'] },
+  // Drivers & helpers master — role is 'Driver' or 'Helper'.
+  Staff:        { table: 'gdb_staff',         cols: ['id','name','role','phone','active'] },
 };
 
 const NUMERIC_COLS = new Set(['qty','opening','min_level','value','num']);
@@ -266,6 +289,7 @@ module.exports = function godownbookRoutes(db) {
         warehouses: await readSheetRows(client, 'Warehouses'),
         ignoredBills: await readSheetRows(client, 'IgnoredBills'),
         errors: await readSheetRows(client, 'Errors'),
+        staff: await readSheetRows(client, 'Staff'),
       };
     } finally {
       client.release();
@@ -357,11 +381,20 @@ module.exports = function godownbookRoutes(db) {
       const txnRows = body.transactionRows || [];
       for (const row of txnRows) await insertRow(client, 'Transactions', row);
       const now = body.now || new Date().toISOString();
+      const ewayNumbers = body.ewayNumbers || {}; // billId -> e-way bill no. (bills above threshold)
       for (const id of billIds) {
-        await client.query(
-          `UPDATE gdb_bills SET status = 'Dispatched', dispatched_at = $1, outward_bill_group = $2 WHERE id = $3`,
-          [now, String(body.outwardBillGroup || ''), String(id)]
-        );
+        const eway = ewayNumbers[id];
+        if (eway) {
+          await client.query(
+            `UPDATE gdb_bills SET status = 'Dispatched', dispatched_at = $1, outward_bill_group = $2, eway_no = $3 WHERE id = $4`,
+            [now, String(body.outwardBillGroup || ''), String(eway), String(id)]
+          );
+        } else {
+          await client.query(
+            `UPDATE gdb_bills SET status = 'Dispatched', dispatched_at = $1, outward_bill_group = $2 WHERE id = $3`,
+            [now, String(body.outwardBillGroup || ''), String(id)]
+          );
+        }
       }
       return { ok: true, dispatchedCount: billIds.length, transactionsAdded: txnRows.length };
     });
@@ -401,6 +434,12 @@ module.exports = function godownbookRoutes(db) {
           [now, String(body.editingBillGroup || ''), String(id)]
         );
         marked += r.rowCount;
+      }
+      // E-way numbers entered/updated during the edit — applies to every
+      // bill in the map, whether newly added or already dispatched.
+      const editEway = body.ewayNumbers || {};
+      for (const [id, eway] of Object.entries(editEway)) {
+        if (eway) await client.query(`UPDATE gdb_bills SET eway_no = $1 WHERE id = $2`, [String(eway), String(id)]);
       }
       return { ok: true, clearedCount: del.rowCount, transactionsAdded: newRows.length, billsMarked: marked };
     });
