@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>GodownBook — Sign In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#F7F5F0; --ledger:#FFFFFF; --rule:#E3DED4; --rule-dark:#8A8577; --ink:#2B2A26; --inward:#1B7A3D; --low:#B00020; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'IBM Plex Sans',sans-serif; background:var(--paper); color:var(--ink); min-height:100vh; display:flex; align-items:center; justify-content:center; }
+  .card { background:var(--ledger); border:1px solid var(--rule); border-radius:12px; padding:36px 40px; width:100%; max-width:400px; box-shadow:0 8px 30px rgba(0,0,0,0.06); }
+  .brand { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+  .brand h1 { font-size:22px; font-weight:700; }
+  .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--rule-dark); margin-bottom:26px; }
+  label { display:block; font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--rule-dark); margin:14px 0 6px; font-weight:600; }
+  input { width:100%; padding:11px 13px; border:1px solid var(--rule); border-radius:6px; font-size:15px; font-family:inherit; background:#fff; outline:none; }
+  input:focus { border-color:#7A9CC6; background:#F4F8FD; }
+  button { width:100%; margin-top:22px; padding:12px; border:none; border-radius:6px; background:var(--inward); color:#fff; font-size:15px; font-weight:600; font-family:inherit; cursor:pointer; }
+  button:disabled { opacity:0.6; cursor:default; }
+  .err { display:none; margin-top:14px; color:var(--low); font-size:13px; text-align:center; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand"><span style="font-size:24px;">📦</span><h1>GodownBook</h1></div>
+    <div class="sub">Warehouse Stock Register</div>
+    <form id="f" autocomplete="on">
+      <label for="u">Username</label>
+      <input id="u" type="text" autocomplete="username" autocapitalize="none" autofocus>
+      <label for="p">Password</label>
+      <input id="p" type="password" autocomplete="current-password">
+      <button id="b" type="submit">🔐 Login</button>
+      <div class="err" id="e"></div>
+    </form>
+  </div>
+<script>
+document.getElementById('f').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const b = document.getElementById('b'), e = document.getElementById('e');
+  e.style.display = 'none';
+  b.disabled = true; b.textContent = 'Signing in…';
+  try {
+    const r = await fetch('/api/gbook/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('u').value,
+        password: document.getElementById('p').value
+      })
+    });
+    const j = await r.json();
+    if (j.ok) { location.href = '/app'; return; }
+    e.textContent = '❌ ' + (j.error || 'Login failed.');
+    e.style.display = 'block';
+  } catch (err) {
+    e.textContent = '❌ Could not reach the server — check your connection.';
+    e.style.display = 'block';
+  }
+  b.disabled = false; b.textContent = '🔐 Login';
+});
+</script>
+</body>
+</html>

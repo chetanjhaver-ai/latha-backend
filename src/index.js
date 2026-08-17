@@ -20,7 +20,13 @@ app.use('/api/complaints', require('./routes/complaints')(db));
 // Its tables are all prefixed gdb_ — fully separate from the old gb_* tables
 // (kept as frozen archive) and from the complaints app. Creates its own
 // tables on first boot; no migration run needed.
-app.use('/api/gbook', require('./routes/godownbook')(db));
+const gbookRouter = require('./routes/godownbook')(db);
+app.use('/api/gbook', gbookRouter);
+// GodownBook is served BY this server now (moved off Netlify): '/' is a
+// small public login shell; '/app' is the full application, handed out only
+// to browsers holding a valid session cookie.
+app.get('/', gbookRouter.loginPage);
+app.get('/app', gbookRouter.appPage);
 
 // Basic housekeeping: clear out expired sessions periodically.
 setInterval(() => { cleanupExpiredSessions(db).catch(() => {}); }, 60 * 60 * 1000);

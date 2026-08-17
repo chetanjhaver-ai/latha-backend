@@ -30,7 +30,10 @@
  */
 
 const express = require('express');
+const path = require('path');
 const { Pool } = require('pg');
+const { randomUUID } = require('crypto');
+const { hashPassword, verifyPassword } = require('../crypto');
 
 const API_KEY = process.env.GODOWNBOOK_KEY || 'godown-book-2026';
 const WRITE_LOCK_KEY = 764292027; // advisory-lock id unique to GodownBook
@@ -72,6 +75,17 @@ ALTER TABLE gdb_items ADD COLUMN IF NOT EXISTS barcode TEXT NOT NULL DEFAULT '';
 -- E-way bill number (added later) — mandatory for bills above the govt
 -- threshold before their outward delivery note can be saved/printed.
 ALTER TABLE gdb_bills ADD COLUMN IF NOT EXISTS eway_no TEXT NOT NULL DEFAULT '';
+-- Server-side login (added later): sessions + hashed passwords. A user's
+-- plaintext password (from the Sheets era) is transparently upgraded to a
+-- salted hash the first time they log in, and the plaintext is erased.
+CREATE TABLE IF NOT EXISTS gdb_sessions (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+ALTER TABLE gdb_users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE gdb_users ADD COLUMN IF NOT EXISTS password_salt TEXT NOT NULL DEFAULT '';
 -- Transport columns (added later) — who physically took an outward delivery.
 ALTER TABLE gdb_transactions ADD COLUMN IF NOT EXISTS driver TEXT NOT NULL DEFAULT '';
 ALTER TABLE gdb_transactions ADD COLUMN IF NOT EXISTS helpers TEXT NOT NULL DEFAULT '';
@@ -229,8 +243,52 @@ module.exports = function godownbookRoutes(db) {
   async function readSheetRows(client, sheetName) {
     const def = SHEETS[sheetName];
     const res = await client.query(`SELECT ${def.cols.map(c => `"${c}"`).join(',')} FROM "${def.table}" ORDER BY seq`);
-    return res.rows.map(r => rowToArray(def, r));
+    const rows = res.rows.map(r => rowToArray(def, r));
+    // Passwords NEVER leave the server — login is verified server-side now.
+    // (Password is column index 2 of the Users sheet layout.)
+    if (sheetName === 'Users') rows.forEach(r => { r[2] = ''; });
+    return rows;
   }
+
+  // ─────────── SESSIONS & LOGIN ───────────
+  function parseCookies(req) {
+    const out = {};
+    String(req.headers.cookie || '').split(';').forEach(part => {
+      const i = part.indexOf('=');
+      if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    });
+    return out;
+  }
+  function setSessionCookie(res, token, maxAgeSeconds) {
+    res.setHeader('Set-Cookie',
+      `gbsession=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${maxAgeSeconds}`);
+  }
+  async function authFromReq(req) {
+    const token = parseCookies(req).gbsession;
+    if (!token) return null;
+    const r = await pool.query(
+      `SELECT u.id, u.username, u.name, u.email, u.role, u.warehouse
+       FROM gdb_sessions s JOIN gdb_users u ON u.id = s.user_id
+       WHERE s.token = $1 AND s.expires_at > now() AND u.active = TRUE`,
+      [token]
+    );
+    return r.rowCount ? r.rows[0] : null;
+  }
+  // Basic brute-force brake: 5 failed tries per username per 15 minutes.
+  const loginFails = {};
+  function loginAllowed(username) {
+    const f = loginFails[username];
+    if (!f) return true;
+    if (Date.now() - f.first > 15 * 60 * 1000) { delete loginFails[username]; return true; }
+    return f.count < 5;
+  }
+  function recordFail(username) {
+    const f = loginFails[username];
+    if (!f || Date.now() - f.first > 15 * 60 * 1000) loginFails[username] = { first: Date.now(), count: 1 };
+    else f.count++;
+  }
+  // Expired sessions get swept periodically.
+  setInterval(() => { pool.query(`DELETE FROM gdb_sessions WHERE expires_at < now()`).catch(() => {}); }, 6 * 3600 * 1000);
 
   // One writer at a time — same job Apps Script's LockService did, but held
   // by Postgres and auto-released on commit/rollback/crash.
@@ -600,6 +658,80 @@ module.exports = function godownbookRoutes(db) {
     });
   });
 
+  // ── Login / logout / whoami — the only endpoints reachable WITHOUT a
+  //    session. Everything below the guard needs a valid login cookie. ──
+  router.post('/login', async (req, res) => {
+    try {
+      await schemaReady;
+      const body = req.body || {};
+      const username = String(body.username || '').trim().toLowerCase();
+      const password = String(body.password || '');
+      if (!username || !password) return res.json({ error: 'Enter username and password.' });
+      if (!loginAllowed(username)) return res.json({ error: 'Too many failed attempts — wait 15 minutes and try again.' });
+      const r = await pool.query(`SELECT * FROM gdb_users WHERE lower(username) = $1 AND active = TRUE`, [username]);
+      const u = r.rows[0];
+      let valid = false;
+      if (u) {
+        // A non-empty plaintext password takes priority — it means either a
+        // Sheets-era account that never logged in here, OR an admin has just
+        // reset this user's password from the Users screen. Either way, on a
+        // successful match it's upgraded to a salted hash and the plaintext
+        // is erased, so readable passwords never persist.
+        if (u.password && u.password === password) {
+          valid = true;
+          const { hash, salt } = hashPassword(password);
+          await pool.query(`UPDATE gdb_users SET password_hash=$1, password_salt=$2, password='' WHERE id=$3`, [hash, salt, u.id]);
+        } else if (!u.password && u.password_hash) {
+          valid = verifyPassword(password, u.password_hash, u.password_salt);
+        }
+      }
+      if (!valid) { recordFail(username); return res.json({ error: 'Invalid username or password.' }); }
+      delete loginFails[username];
+      const token = randomUUID() + randomUUID().replace(/-/g, '');
+      const DAYS = 7;
+      await pool.query(`INSERT INTO gdb_sessions (token, user_id, expires_at) VALUES ($1, $2, now() + interval '${DAYS} days')`, [token, u.id]);
+      setSessionCookie(res, token, DAYS * 86400);
+      return res.json({ ok: true, user: { id: u.id, username: u.username, name: u.name, email: u.email, role: u.role, warehouse: u.warehouse } });
+    } catch (err) {
+      return res.json({ error: String(err) });
+    }
+  });
+
+  router.post('/logout', async (req, res) => {
+    try {
+      const token = parseCookies(req).gbsession;
+      if (token) await pool.query(`DELETE FROM gdb_sessions WHERE token = $1`, [token]);
+    } catch (e) {}
+    res.setHeader('Set-Cookie', 'gbsession=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0');
+    res.json({ ok: true });
+  });
+
+  router.get('/whoami', async (req, res) => {
+    try {
+      await schemaReady;
+      const u = await authFromReq(req);
+      if (!u) return res.status(401).json({ error: 'unauthorized' });
+      return res.json({ ok: true, user: u });
+    } catch (err) {
+      return res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // ── THE GATE: every data operation below requires a valid session.
+  //    A copied frontend, an old Netlify deployment, or anyone with just
+  //    the shared key gets 401 here — the key alone no longer opens data. ──
+  router.use(async (req, res, next) => {
+    try {
+      await schemaReady;
+      const u = await authFromReq(req);
+      if (!u) return res.status(401).json({ error: 'unauthorized' });
+      req.gbUser = u;
+      next();
+    } catch (err) {
+      return res.status(500).json({ error: String(err) });
+    }
+  });
+
   router.get('/', async (req, res) => {
     try {
       await schemaReady;
@@ -639,6 +771,30 @@ module.exports = function godownbookRoutes(db) {
       return res.json({ error: String(err) });
     }
   });
+
+  // ── GATED PAGE SERVING — the app's code itself sits behind the login.
+  //    '/' serves only the small login shell; '/app' serves the full
+  //    application, and only to a browser holding a valid session cookie.
+  //    Wired up in index.js: app.get('/', router.loginPage) etc. ──
+  const APP_DIR = path.join(__dirname, '..', 'app');
+  router.loginPage = async (req, res) => {
+    try {
+      await schemaReady;
+      const u = await authFromReq(req);
+      if (u) return res.redirect('/app'); // already logged in — straight through
+    } catch (e) {}
+    res.sendFile(path.join(APP_DIR, 'login.html'));
+  };
+  router.appPage = async (req, res) => {
+    try {
+      await schemaReady;
+      const u = await authFromReq(req);
+      if (!u) return res.redirect('/'); // no session — back to the login wall
+      return res.sendFile(path.join(APP_DIR, 'godownbook.html'));
+    } catch (e) {
+      return res.redirect('/');
+    }
+  };
 
   return router;
 };
