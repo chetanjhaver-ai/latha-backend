@@ -22,11 +22,20 @@ app.use('/api/complaints', require('./routes/complaints')(db));
 // tables on first boot; no migration run needed.
 const gbookRouter = require('./routes/godownbook')(db);
 app.use('/api/gbook', gbookRouter);
-// GodownBook is served BY this server now (moved off Netlify): '/' is a
-// small public login shell; '/app' is the full application, handed out only
-// to browsers holding a valid session cookie.
-app.get('/', gbookRouter.loginPage);
+// Both frontends are served BY this server now (moved off Netlify), each
+// behind its own login wall. Which app answers '/' depends on which NAME
+// was used to reach the server: crm.lechennai.in gets ComplaintBook,
+// everything else (godown.lechennai.in / onrender.com) gets GodownBook.
+// Path-based routes (/crm, /crm/app) work on every hostname too, so the
+// CRM can be tested before its domain is repointed.
+const crm = require('./routes/crmpages')(db);
+app.get('/', (req, res) => {
+  if (String(req.hostname || '').startsWith('crm.')) return crm.loginPage(req, res);
+  return gbookRouter.loginPage(req, res);
+});
 app.get('/app', gbookRouter.appPage);
+app.get('/crm', crm.loginPage);
+app.get('/crm/app', crm.appPage);
 
 // Basic housekeeping: clear out expired sessions periodically.
 setInterval(() => { cleanupExpiredSessions(db).catch(() => {}); }, 60 * 60 * 1000);

@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ComplaintBook — Customer Service Register</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+:root {
+  --ink:#1A1A1A; --paper:#F7F5F0; --ledger:#FFFFFF; --rule:#D8D3C8; --rule-dark:#A09890;
+  --inward:#1A6B3C; --inward-bg:#E8F5EE; --outward:#8B2500; --outward-bg:#FDEEE9;
+  --accent:#C47B22; --accent-bg:#FDF3E3; --low:#B00020; --low-bg:#FDECEA;
+  --blue:#2563EB; --blue-bg:#EFF6FF; --edited:#7C3AED; --edited-bg:#F5F3FF;
+  --sidebar-w:220px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+
+/* SETUP / LOGIN */
+#setup-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+.setup-card{background:var(--ledger);border:1px solid var(--rule);border-radius:10px;padding:30px 34px;max-width:400px;width:100%;box-shadow:0 4px 30px rgba(0,0,0,0.08);}
+.setup-card .logo{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;margin-bottom:2px;}
+.setup-card .sub{font-size:11px;color:var(--rule-dark);letter-spacing:1px;text-transform:uppercase;margin-bottom:22px;}
+.step-block{margin-bottom:14px;}
+.step-label{font-size:11px;letter-spacing:0.8px;text-transform:uppercase;color:var(--rule-dark);margin-bottom:4px;}
+.step-block input{width:100%;padding:8px 10px;border:1px solid var(--rule);border-radius:4px;font-size:13px;font-family:'IBM Plex Sans',sans-serif;background:var(--paper);outline:none;}
+.step-block input:focus{border-color:var(--accent);}
+.btn-login{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:11px;background:var(--inward);color:#fff;border:none;border-radius:5px;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;margin-top:8px;}
+.btn-login:hover{background:#145430;}
+
+/* APP SHELL */
+#app-shell{display:none;height:100vh;overflow:hidden;}
+#app-shell.visible{display:flex;}
+#sidebar{width:var(--sidebar-w);background:var(--ink);color:#E8E4DC;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;}
+.sidebar-brand{padding:16px 18px 12px;border-bottom:1px solid #333;}
+.sidebar-brand .logo{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600;color:#FFF;}
+.sidebar-brand .ver{font-size:10px;color:#555;letter-spacing:1px;margin-top:2px;}
+.sidebar-user{padding:10px 18px;border-bottom:1px solid #222;display:flex;align-items:center;gap:8px;}
+.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:#fff;flex-shrink:0;}
+.user-info .name{font-size:12px;color:#ddd;font-weight:500;}
+.role-badge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:600;margin-top:4px;}
+.role-badge.admin{background:var(--accent-bg);color:var(--accent);}
+.role-badge.user{background:#222;color:#888;}
+.nav-section{padding:10px 0 4px;}
+.nav-label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:#555;padding:0 18px;margin-bottom:3px;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 18px;cursor:pointer;border-left:3px solid transparent;font-size:13px;color:#B0A898;transition:all 0.15s;}
+.nav-item:hover{background:#252525;color:#E8E4DC;}
+.nav-item.active{background:#252525;color:#FFF;border-left-color:var(--accent);}
+.nav-icon{font-size:15px;width:18px;text-align:center;}
+.nav-spacer{flex:1;}
+.sidebar-footer{padding:12px 18px;border-top:1px solid #222;}
+.btn-signout{width:100%;padding:6px;background:transparent;border:1px solid #333;color:#888;border-radius:4px;font-size:12px;cursor:pointer;font-family:inherit;}
+.btn-signout:hover{border-color:#555;color:#ccc;}
+
+/* MAIN */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+#topbar{background:var(--ledger);border-bottom:1px solid var(--rule);padding:10px 20px;display:flex;align-items:center;gap:12px;}
+#topbar h1{font-size:15px;font-weight:600;flex:1;}
+#content{flex:1;overflow-y:auto;padding:16px 20px;}
+.panel{display:none;}
+.panel.active{display:block;}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:4px;font-size:13px;font-weight:500;cursor:pointer;border:1px solid transparent;font-family:inherit;transition:all 0.15s;}
+.btn-primary{background:var(--ink);color:#FFF;}
+.btn-primary:hover{background:#333;}
+.btn-inward{background:var(--inward);color:#FFF;}
+.btn-inward:hover{background:#145430;}
+.btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule);}
+.btn-ghost:hover{background:var(--paper);}
+.btn-sm{padding:3px 9px;font-size:12px;}
+.btn:disabled{opacity:0.5;cursor:not-allowed;}
+
+/* STATS */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;}
+.stat-card{background:var(--ledger);border:1px solid var(--rule);border-radius:6px;padding:12px 16px;cursor:pointer;transition:all 0.15s;}
+.stat-card:hover{border-color:var(--ink);transform:translateY(-1px);}
+.stat-card.active-filter{border-width:2px;border-color:var(--ink);background:var(--paper);}
+.stat-card .label{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--rule-dark);margin-bottom:4px;}
+.stat-card .value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;}
+.stat-card.open .value{color:var(--low);}
+.stat-card.progress .value{color:var(--accent);}
+.stat-card.resolved .value{color:var(--inward);}
+
+/* SECTION */
+.section-header{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+.section-header h2{font-size:14px;font-weight:600;flex:1;}
+.filter-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;}
+.filter-bar select,.filter-bar input{padding:7px 10px;border:1px solid var(--rule);border-radius:4px;font-size:12px;font-family:inherit;background:var(--ledger);}
+.filter-bar input[type="text"]{flex:1;min-width:180px;}
+
+/* DATE FILTER BAR */
+.date-filter-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--ledger);border:1px solid var(--rule);border-radius:6px;padding:10px 14px;margin-bottom:14px;}
+.date-filter-bar label{font-size:11px;letter-spacing:0.8px;text-transform:uppercase;color:var(--rule-dark);}
+.date-filter-bar input[type=date]{padding:5px 8px;border:1px solid var(--rule);border-radius:4px;font-size:13px;font-family:inherit;background:var(--paper);outline:none;}
+.date-filter-bar input[type=date]:focus{border-color:var(--accent);}
+.date-filter-bar .filter-divider{color:var(--rule);}
+.quick-btn{padding:4px 10px;border-radius:4px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--rule);background:transparent;font-family:inherit;color:var(--ink);transition:all 0.15s;}
+.quick-btn:hover,.quick-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+
+/* TABLE */
+.ledger-table{width:100%;border-collapse:collapse;background:var(--ledger);border:1px solid var(--rule);border-radius:6px;overflow:hidden;font-size:13px;}
+.ledger-table thead th{background:var(--paper);padding:8px 12px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--rule-dark);border-bottom:1px solid var(--rule);white-space:nowrap;}
+.ledger-table thead th .th-filter{display:block;margin-top:5px;width:100%;min-width:90px;padding:4px 6px;border:1px solid var(--rule);border-radius:4px;font-size:11px;text-transform:none;letter-spacing:normal;font-family:'IBM Plex Sans',sans-serif;color:var(--ink);background:var(--ledger);}
+.ledger-table thead th .th-filter:focus{border-color:var(--accent);outline:none;}
+.ledger-table tbody tr{border-bottom:1px solid var(--rule);cursor:pointer;}
+.ledger-table tbody tr:last-child{border-bottom:none;}
+.ledger-table tbody tr:hover{background:#FAFAF8;}
+.ledger-table td{padding:7px 12px;vertical-align:middle;}
+.badge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:500;white-space:nowrap;}
+.badge-makkal{background:var(--blue-bg);color:var(--blue);}
+.badge-elac{background:var(--accent-bg);color:var(--accent);}
+.badge-vijay{background:var(--edited-bg);color:var(--edited);}
+.status-select{padding:3px 8px;border-radius:20px;border:1px solid var(--rule);font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;text-transform:uppercase;cursor:pointer;}
+.status-open{background:var(--low-bg);color:var(--low);}
+.status-progress{background:var(--accent-bg);color:var(--accent);}
+.status-resolved{background:var(--inward-bg);color:var(--inward);}
+.empty-state{text-align:center;padding:50px 20px;color:var(--rule-dark);font-size:13px;}
+
+/* FORM */
+.form-card{background:var(--ledger);border:1px solid var(--rule);border-radius:8px;padding:22px;max-width:640px;}
+.form-row{margin-bottom:14px;}
+.form-row label{display:block;font-size:11px;letter-spacing:0.8px;text-transform:uppercase;color:var(--rule-dark);margin-bottom:4px;}
+.form-row input,.form-row textarea,.form-row select{width:100%;padding:8px 10px;border:1px solid var(--rule);border-radius:4px;font-size:13px;font-family:inherit;background:var(--paper);outline:none;}
+.form-row input:focus,.form-row textarea:focus,.form-row select:focus{border-color:var(--accent);}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media (max-width:600px){ .form-grid{grid-template-columns:1fr;} }
+.brand-select{display:flex;gap:8px;}
+.brand-pick{flex:1;padding:12px 8px;border:2px solid var(--rule);border-radius:6px;background:var(--paper);cursor:pointer;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;text-transform:uppercase;color:var(--rule-dark);text-align:center;}
+.brand-pick.sel-makkal{border-color:var(--blue);background:var(--blue-bg);color:var(--blue);}
+.brand-pick.sel-elac{border-color:var(--accent);background:var(--accent-bg);color:var(--accent);}
+.brand-pick.sel-vijay{border-color:var(--edited);background:var(--edited-bg);color:var(--edited);}
+
+/* MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100;align-items:center;justify-content:center;}
+.modal-bg.open{display:flex;}
+.modal{background:var(--ledger);border-radius:8px;width:520px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.25);}
+.modal-header{padding:14px 18px 12px;border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:10px;}
+.modal-header h3{font-size:14px;font-weight:600;flex:1;}
+.close-btn{cursor:pointer;font-size:20px;color:var(--rule-dark);background:none;border:none;line-height:1;}
+.modal-body{padding:16px 18px;}
+.detail-row{margin-bottom:12px;}
+.detail-row .k{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--rule-dark);margin-bottom:3px;}
+.detail-row .v{font-size:14px;line-height:1.5;}
+
+/* TOAST */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:12px 20px;border-radius:5px;font-size:13px;opacity:0;transition:all .25s ease;pointer-events:none;z-index:200;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* LOADING */
+#loading{position:fixed;inset:0;background:rgba(247,245,240,0.88);z-index:300;display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;}
+#loading.show{display:flex;}
+.spinner{width:30px;height:30px;border:3px solid var(--rule);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sync-line{font-size:11px;color:var(--rule-dark);text-align:center;padding:6px 18px;border-top:1px solid #222;}
+</style>
+</head>
+<body>
+
+<div id="loading"><div class="spinner"></div><div style="font-size:13px;color:var(--rule-dark)" id="loading-msg">Loading…</div></div>
+
+<!-- LOGIN -->
+<div id="setup-screen">
+  <div class="setup-card">
+    <div class="logo">📋 ComplaintBook</div>
+    <div class="sub">Customer Service Register</div>
+    <div style="margin-bottom:20px;"></div>
+    <div class="step-block">
+      <div class="step-label">Username</div>
+      <input type="text" id="login-username" placeholder="Enter username"
+        onkeydown="if(event.key==='Enter')document.getElementById('login-password').focus()">
+    </div>
+    <div class="step-block">
+      <div class="step-label">Password</div>
+      <input type="password" id="login-password" placeholder="Enter password"
+        onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn-login" onclick="doLogin()">🔐 Login</button>
+    <div id="login-error" style="font-size:12px;color:var(--low);margin-top:8px;display:none;text-align:center;"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-shell">
+  <nav id="sidebar">
+    <div class="sidebar-brand"><div class="logo">ComplaintBook</div><div class="ver">v1 · SERVICE REGISTER</div></div>
+    <div class="sidebar-user">
+      <div class="user-avatar" id="user-avatar">A</div>
+      <div class="user-info">
+        <div class="name" id="user-name">User</div>
+        <div id="user-role-badge" class="role-badge user">User</div>
+      </div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Register</div>
+      <div class="nav-item" id="nav-new" onclick="showPanel('new',this)"><span class="nav-icon">📝</span> New Complaint</div>
+      <div class="nav-item" id="nav-all" onclick="showPanel('all',this)"><span class="nav-icon">📊</span> All Complaints</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Reports</div>
+      <div class="nav-item" id="nav-reports" onclick="showPanel('reports',this)"><span class="nav-icon">📈</span> Summary</div>
+      <div class="nav-item" id="nav-timeframe" onclick="showPanel('timeframe',this)"><span class="nav-icon">⏱️</span> Time Frame</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Manage</div>
+      <div class="nav-item" id="nav-tech" onclick="showPanel('tech',this)"><span class="nav-icon">🔧</span> Technicians</div>
+      <div class="nav-item" id="nav-items" onclick="showPanel('items',this)"><span class="nav-icon">📦</span> Items</div>
+    </div>
+    <div class="nav-spacer"></div>
+    <div class="sidebar-footer">
+      <div class="sync-status" style="font-size:11px;color:#555;display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <div style="width:7px;height:7px;border-radius:50%;background:var(--inward);" id="sync-dot"></div>
+        <span id="sync-label">Synced</span>
+      </div>
+
+      <button class="btn-signout" onclick="signOut()">Sign Out</button>
+    </div>
+  </nav>
+
+  <div id="main">
+    <div id="topbar">
+      <h1 id="page-title">New Complaint</h1>
+      <button class="btn btn-ghost btn-sm" id="refreshBtn" style="display:none;" onclick="refreshActivePanel()">🔄 Refresh</button>
+    </div>
+    <div id="content">
+
+      <!-- NEW COMPLAINT PANEL -->
+      <div class="panel" id="panel-new">
+        <div class="form-card">
+          <div class="form-row">
+            <label>Brand</label>
+            <div class="brand-select" id="brandSelect">
+              <div class="brand-pick" data-brand="Makkal" onclick="selectBrand('Makkal')">Makkal</div>
+              <div class="brand-pick" data-brand="Elac" onclick="selectBrand('Elac')">Elac</div>
+              <div class="brand-pick" data-brand="Vijay" onclick="selectBrand('Vijay')">Vijay</div>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Contact Number</label>
+              <input type="tel" id="f-contact" placeholder="10-digit mobile number" onblur="lookupCustomer()">
+            </div>
+            <div class="form-row">
+              <label>Customer Name</label>
+              <input type="text" id="f-name" placeholder="Full name">
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Address</label>
+            <textarea id="f-address" rows="2" placeholder="Customer address"></textarea>
+          </div>
+
+          <div style="border-top:1px solid var(--rule);margin:16px 0 12px;padding-top:14px;">
+            <label style="font-size:11px;letter-spacing:0.8px;text-transform:uppercase;color:var(--rule-dark);display:block;margin-bottom:8px;">
+              Items / Complaints — add one row per issue, each becomes its own ticket
+            </label>
+            <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:10px;">
+              <div class="form-row" style="margin:0;">
+                <label>Item</label>
+                <select id="f-item">
+                  <option value="">Select item</option>
+                </select>
+              </div>
+              <div class="form-row" style="margin:0;">
+                <label>Color</label>
+                <input type="text" id="f-color" placeholder="Enter color">
+              </div>
+            </div>
+            <div class="form-row" style="margin-top:10px;">
+              <label>Complaint</label>
+              <textarea id="f-complaint" rows="2" placeholder="Describe the issue reported by the customer"></textarea>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="addComplaintGridRow()">＋ Add This Item</button>
+
+            <div id="complaintGridWrap" style="margin-top:14px;display:none;">
+              <table class="ledger-table" style="font-size:13px;">
+                <thead><tr><th>#</th><th>Item</th><th>Color</th><th>Complaint</th><th style="width:32px"></th></tr></thead>
+                <tbody id="complaintGridBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <button class="btn btn-inward" style="width:100%;justify-content:center;padding:10px;" onclick="submitComplaint()">＋ Log All Complaints</button>
+        </div>
+      </div>
+
+      <!-- ALL COMPLAINTS PANEL -->
+      <div class="panel" id="panel-all">
+        <div class="stats-row">
+          <div class="stat-card" id="statcard-total" onclick="filterByStatCard('')"><div class="label">Total</div><div class="value" id="stat-total">0</div></div>
+          <div class="stat-card open" id="statcard-open" onclick="filterByStatCard('Open')"><div class="label">Open</div><div class="value" id="stat-open">0</div></div>
+          <div class="stat-card progress" id="statcard-progress" onclick="filterByStatCard('In Progress')"><div class="label">In Progress</div><div class="value" id="stat-progress">0</div></div>
+          <div class="stat-card resolved" id="statcard-resolved" onclick="filterByStatCard('Resolved')"><div class="label">Resolved</div><div class="value" id="stat-resolved">0</div></div>
+        </div>
+        <div class="section-header">
+          <h2>Complaint History</h2>
+          <button class="btn btn-ghost btn-sm" onclick="exportExcel()">📗 Export Excel</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportCSV()">📥 Export CSV</button>
+          <button class="btn btn-ghost btn-sm" id="importBtn" style="display:none;" onclick="document.getElementById('complaint-file-input').click()">📤 Import from Excel</button>
+          <input type="file" id="complaint-file-input" accept=".xlsx,.xls" style="display:none" onchange="handleComplaintImportFile(this.files[0])">
+        </div>
+        <div style="font-size:11px;color:var(--rule-dark);margin-bottom:10px;display:none;" id="importHint">
+          Columns: <strong>Ticket ID</strong>, <strong>Brand</strong>, <strong>Name</strong>, <strong>Contact</strong>, <strong>Complaint</strong> required · Address, Product, Status, Logged At, Assigned To, Assigned On, Resolved On optional. Rows with a Ticket ID that already exists are skipped, not overwritten.
+        </div>
+        <div class="date-filter-bar" id="complaints-date-bar">
+          <label>Quick:</label>
+          <button class="quick-btn" onclick="setQuick('complaints','today')">Today</button>
+          <button class="quick-btn" onclick="setQuick('complaints','week')">This Week</button>
+          <button class="quick-btn" onclick="setQuick('complaints','month')">This Month</button>
+          <button class="quick-btn" onclick="setQuick('complaints','year')">This Year</button>
+          <button class="quick-btn active" onclick="setQuick('complaints','all')">All</button>
+          <span class="filter-divider">|</span>
+          <label>From</label>
+          <input type="date" id="complaints-date-from" onchange="applyDateFilter('complaints')">
+          <label>To</label>
+          <input type="date" id="complaints-date-to" onchange="applyDateFilter('complaints')">
+          <button class="quick-btn" onclick="clearDateFilter('complaints')">✕ Clear</button>
+        </div>
+        <div class="filter-bar">
+          <select id="filter-brand" onchange="renderList()">
+            <option value="">All Brands</option>
+            <option value="Makkal">Makkal</option>
+            <option value="Elac">Elac</option>
+            <option value="Vijay">Vijay</option>
+          </select>
+          <select id="filter-status" onchange="renderList()">
+            <option value="">All Status</option>
+            <option value="Open">Open</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Resolved">Resolved</option>
+          </select>
+          <input type="text" id="filter-search" placeholder="Search name, contact, product, ticket ID..." oninput="renderList()">
+        </div>
+        <table class="ledger-table">
+          <thead>
+            <tr>
+              <th>Ticket</th><th>Date</th><th>Brand</th><th>Name</th><th>Contact</th><th>Product</th><th>Assigned To</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="ticketTableBody"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No complaints match this view</div>
+      </div>
+
+      <!-- REPORTS PANEL -->
+      <div class="panel" id="panel-reports">
+        <div class="section-header">
+          <h2>Complaint Report</h2>
+          <button class="btn btn-ghost btn-sm" onclick="clearReportFilters()">✕ Clear Filters</button>
+        </div>
+        <div class="date-filter-bar" id="reports-date-bar">
+          <label>Quick:</label>
+          <button class="quick-btn" onclick="setQuick('reports','today')">Today</button>
+          <button class="quick-btn" onclick="setQuick('reports','week')">This Week</button>
+          <button class="quick-btn" onclick="setQuick('reports','month')">This Month</button>
+          <button class="quick-btn" onclick="setQuick('reports','year')">This Year</button>
+          <button class="quick-btn active" onclick="setQuick('reports','all')">All</button>
+          <span class="filter-divider">|</span>
+          <label>From</label>
+          <input type="date" id="reports-date-from" onchange="applyDateFilter('reports')">
+          <label>To</label>
+          <input type="date" id="reports-date-to" onchange="applyDateFilter('reports')">
+          <button class="quick-btn" onclick="clearDateFilter('reports')">✕ Clear</button>
+        </div>
+        <div class="count-line" id="reportCountLine" style="font-size:12px;color:var(--rule-dark);margin-bottom:10px;"></div>
+        <table class="ledger-table">
+          <thead>
+            <tr>
+              <th>Ticket</th>
+              <th>Date</th>
+              <th>
+                Brand
+                <select class="th-filter" id="rf-brand" onchange="renderReportsTable()">
+                  <option value="">All</option>
+                  <option value="Makkal">Makkal</option>
+                  <option value="Elac">Elac</option>
+                  <option value="Vijay">Vijay</option>
+                </select>
+              </th>
+              <th>Name</th>
+              <th>Contact</th>
+              <th>
+                Product
+                <input type="text" class="th-filter" id="rf-product" placeholder="Filter…" oninput="renderReportsTable()">
+              </th>
+              <th>
+                Assigned To
+                <select class="th-filter" id="rf-assigned" onchange="renderReportsTable()">
+                  <option value="">All</option>
+                </select>
+              </th>
+              <th>
+                Status
+                <select class="th-filter" id="rf-status" onchange="renderReportsTable()">
+                  <option value="">All</option>
+                  <option value="Open">Open</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Resolved">Resolved</option>
+                </select>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="reportTableBody"></tbody>
+        </table>
+        <div class="empty-state" id="reportEmptyState" style="display:none;">No complaints match this filter</div>
+      </div>
+
+      <!-- TIME FRAME PANEL -->
+      <div class="panel" id="panel-timeframe">
+        <div class="section-header"><h2>Pending Beyond Time Frame</h2></div>
+        <div class="filter-bar">
+          <label style="font-size:11px;letter-spacing:0.8px;text-transform:uppercase;color:var(--rule-dark);">Not resolved for more than</label>
+          <select id="tf-days" onchange="renderTimeframeTable()">
+            <option value="3">3 days</option>
+            <option value="5">5 days</option>
+            <option value="7">7 days</option>
+            <option value="10">10 days</option>
+          </select>
+        </div>
+        <div class="count-line" id="tfCountLine" style="font-size:12px;color:var(--rule-dark);margin-bottom:10px;"></div>
+        <table class="ledger-table">
+          <thead>
+            <tr><th>Ticket</th><th>Registered</th><th>Assigned</th><th>Resolved</th><th>Status</th><th>Days Open</th></tr>
+          </thead>
+          <tbody id="tfTableBody"></tbody>
+        </table>
+        <div class="empty-state" id="tfEmptyState" style="display:none;">No complaints pending beyond this time frame</div>
+      </div>
+
+      <!-- TECHNICIANS PANEL -->
+      <div class="panel" id="panel-tech">
+        <div class="form-card" style="margin-bottom:20px;">
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Technician Name</label>
+              <input type="text" id="tech-name" placeholder="Full name">
+            </div>
+            <div class="form-row">
+              <label>Contact Number</label>
+              <input type="tel" id="tech-number" placeholder="10-digit mobile number">
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Area</label>
+            <input type="text" id="tech-area" placeholder="Service area / zone covered">
+          </div>
+          <button class="btn btn-inward" style="width:100%;justify-content:center;padding:10px;" onclick="addTechnician()">＋ Add Technician</button>
+        </div>
+        <div class="section-header"><h2>Technician List</h2></div>
+        <table class="ledger-table">
+          <thead><tr><th>Name</th><th>Contact</th><th>Area</th></tr></thead>
+          <tbody id="techTableBody"></tbody>
+        </table>
+        <div class="empty-state" id="techEmptyState" style="display:none;">No technicians added yet</div>
+      </div>
+
+      <!-- ITEMS PANEL -->
+      <div class="panel" id="panel-items">
+        <div class="form-card" style="margin-bottom:20px;">
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Brand</label>
+              <select id="item-brand">
+                <option value="">Select brand</option>
+                <option value="Makkal">Makkal</option>
+                <option value="Elac">Elac</option>
+                <option value="Vijay">Vijay</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Item</label>
+              <input type="text" id="item-name" placeholder="e.g. Ceiling Fan 1200mm">
+            </div>
+          </div>
+          <button class="btn btn-inward" style="width:100%;justify-content:center;padding:10px;" onclick="addItem()">＋ Add Item</button>
+        </div>
+        <div class="section-header"><h2>Item List</h2></div>
+        <table class="ledger-table">
+          <thead><tr><th>Brand</th><th>Item</th></tr></thead>
+          <tbody id="itemTableBody"></tbody>
+        </table>
+        <div class="empty-state" id="itemEmptyState" style="display:none;">No items added yet</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="modal-bg" id="detailModalBg">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTicketId">Ticket</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<!-- WHATSAPP PROMPT MODAL -->
+<div class="modal-bg" id="waModalBg">
+  <div class="modal" style="width:420px;">
+    <div class="modal-header">
+      <h3 id="waModalTitle">Send WhatsApp</h3>
+      <button class="close-btn" onclick="closeWaModal()">×</button>
+    </div>
+    <div class="modal-body" id="waModalBody" style="display:flex;flex-direction:column;gap:10px;"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ═══════════════════════════════════════
+  //  CONFIG — served BY the backend itself now, so all API calls are
+  //  same-origin (no hard-coded server address needed).
+  // ═══════════════════════════════════════
+  const API_BASE = '';
+  const TOKEN_KEY = 'complaintbook_token';
+  function getToken(){ return localStorage.getItem(TOKEN_KEY) || ''; }
+  function setToken(t){ localStorage.setItem(TOKEN_KEY, t); }
+  function clearToken(){ localStorage.removeItem(TOKEN_KEY); }
+
+  async function apiFetch(path, opts={}){
+    const headers = Object.assign({}, opts.headers||{});
+    const token = getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    const r = await fetch(API_BASE + path, Object.assign({}, opts, { headers }));
+    let j = {};
+    try { j = await r.json(); } catch(e) {}
+    if (!r.ok) {
+      if (r.status === 401) signOut(); // session expired — force re-login
+      throw new Error(j.error || ('Request failed (' + r.status + ')'));
+    }
+    return j;
+  }
+  function apiGet(path){ return apiFetch(path); }
+  function apiPost(path, body){ return apiFetch(path, { method:'POST', body: JSON.stringify(body) }); }
+  function apiPut(path, body){ return apiFetch(path, { method:'PUT', body: JSON.stringify(body) }); }
+
+  const PREFIX = { Makkal:'MK', Elac:'EL', Vijay:'VJ' };
+  const BADGE_CLASS = { Makkal:'badge-makkal', Elac:'badge-elac', Vijay:'badge-vijay' };
+
+  let selectedBrand = null;
+  let currentRole = null;
+  let currentUser = { email:'', name:'', role:'' };
+  let COMPLAINTS = []; // in-memory cache loaded from the backend
+  let TECHNICIANS = [];
+  let ITEMS = [];
+  let CUSTOMERS = [];
+  const dateFilters = {
+    complaints: { mode: 'all', from: null, to: null },
+    reports: { mode: 'all', from: null, to: null }
+  };
+
+  function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+  function getDateRange(prefix){
+    const f = dateFilters[prefix];
+    if(f.from && f.to) return { from: f.from, to: f.to };
+    const now = new Date();
+    const td = todayStr();
+    if(f.mode === 'today') return { from: td, to: td };
+    if(f.mode === 'week'){
+      const d = new Date(now);
+      d.setDate(d.getDate() - d.getDay());
+      return { from: d.toISOString().slice(0,10), to: td };
+    }
+    if(f.mode === 'month'){
+      return { from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10), to: td };
+    }
+    if(f.mode === 'year'){
+      return { from: new Date(now.getFullYear(), 0, 1).toISOString().slice(0,10), to: td };
+    }
+    return { from: null, to: null }; // all
+  }
+
+  function inDateRange(iso, prefix){
+    const { from, to } = getDateRange(prefix);
+    if(!from && !to) return true;
+    if(!iso) return false;
+    const d = iso.slice(0,10);
+    if(from && d < from) return false;
+    if(to && d > to) return false;
+    return true;
+  }
+
+  function refreshForPrefix(prefix){
+    if(prefix === 'complaints') renderList();
+    if(prefix === 'reports') renderReportsTable();
+  }
+
+  function setQuick(prefix, mode){
+    dateFilters[prefix].mode = mode;
+    dateFilters[prefix].from = null;
+    dateFilters[prefix].to = null;
+    document.getElementById(prefix + '-date-from').value = '';
+    document.getElementById(prefix + '-date-to').value = '';
+    document.querySelectorAll('#' + prefix + '-date-bar .quick-btn').forEach(b=>{
+      b.classList.toggle('active', b.textContent.toLowerCase().replace(' ','') ===
+        (mode==='today'?'today':mode==='week'?'thisweek':mode==='month'?'thismonth':mode==='year'?'thisyear':'all'));
+    });
+    refreshForPrefix(prefix);
+  }
+
+  function applyDateFilter(prefix){
+    const from = document.getElementById(prefix + '-date-from').value;
+    const to = document.getElementById(prefix + '-date-to').value;
+    dateFilters[prefix].from = from || null;
+    dateFilters[prefix].to = to || null;
+    dateFilters[prefix].mode = 'custom';
+    document.querySelectorAll('#' + prefix + '-date-bar .quick-btn').forEach(b=> b.classList.remove('active'));
+    refreshForPrefix(prefix);
+  }
+
+  function clearDateFilter(prefix){
+    dateFilters[prefix].mode = 'all';
+    dateFilters[prefix].from = null;
+    dateFilters[prefix].to = null;
+    document.getElementById(prefix + '-date-from').value = '';
+    document.getElementById(prefix + '-date-to').value = '';
+    document.querySelectorAll('#' + prefix + '-date-bar .quick-btn').forEach(b=>{
+      b.classList.toggle('active', b.textContent === 'All');
+    });
+    refreshForPrefix(prefix);
+  }
+
+  // This page is only served to browsers that already hold a valid login
+  // cookie (the server checks before sending the file). On load, validate
+  // the saved API token, pull the data, and enter the app directly — the
+  // login form lives on the /crm shell page, not here.
+  window.addEventListener('load', async () => {
+    document.getElementById('setup-screen').style.display = 'none';
+    showLoading('Loading…');
+    try {
+      const me = await apiGet('/api/auth/me'); // a 401 here triggers signOut → back to /crm
+      currentUser = { email: me.user.email, name: me.user.name, role: me.user.role };
+      const all = await apiGet('/api/complaints/all');
+      COMPLAINTS = all.complaints; TECHNICIANS = all.technicians;
+      ITEMS = all.items; CUSTOMERS = all.customers;
+      await enterApp(me.user.role, me.user.name);
+    } catch(e) {
+      hideLoading();
+      showToast('❌ ' + e.message);
+    }
+  });
+
+  function showLoading(msg){ document.getElementById('loading-msg').textContent = msg || 'Loading…'; document.getElementById('loading').classList.add('show'); }
+  function hideLoading(){ document.getElementById('loading').classList.remove('show'); }
+  function showToast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(()=> t.classList.remove('show'), 2600);
+  }
+  function setSyncStatus(ok, label){
+    document.getElementById('sync-dot').style.background = ok ? 'var(--inward)' : 'var(--low)';
+    document.getElementById('sync-label').textContent = label;
+  }
+
+  // ═══════════════════════════════════════
+  //  LOGIN  →  GOOGLE OAUTH  →  APP
+  // ═══════════════════════════════════════
+  async function doLogin(){
+    const username = document.getElementById('login-username').value.trim().toLowerCase();
+    const password = document.getElementById('login-password').value.trim();
+    const errEl = document.getElementById('login-error');
+    errEl.style.display = 'none';
+
+    if(!username || !password){
+      errEl.textContent = 'Please enter username and password.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    showLoading('Signing in…');
+    try {
+      const j = await apiPost('/api/auth/login', { username, password });
+      setToken(j.token);
+      currentUser = { email: j.email, name: j.name, role: j.role };
+
+      showLoading('Loading complaints…');
+      const all = await apiGet('/api/complaints/all');
+      COMPLAINTS = all.complaints; TECHNICIANS = all.technicians;
+      ITEMS = all.items; CUSTOMERS = all.customers;
+
+      enterApp(j.role, j.name);
+    } catch(e) {
+      hideLoading();
+      errEl.textContent = '❌ ' + e.message;
+      errEl.style.display = 'block';
+    }
+  }
+
+  function signOut(){
+    clearToken();
+    currentUser = { email:'', name:'', role:'' };
+    COMPLAINTS = []; TECHNICIANS = []; ITEMS = []; CUSTOMERS = [];
+    // Tell the server to end the session AND clear the login cookie (so
+    // /crm/app stops being served), then go back to the login page. Plain
+    // fetch — must not go through apiFetch, whose 401 handler calls signOut.
+    fetch('/api/auth/logout', { method:'POST' })
+      .catch(()=>{})
+      .finally(()=>{ location.href = '/crm'; });
+  }
+
+  async function enterApp(role, name){
+    currentRole = role;
+    document.getElementById('setup-screen').style.display = 'none';
+    document.getElementById('app-shell').classList.add('visible');
+
+    document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+    document.getElementById('user-name').textContent = name;
+    const rb = document.getElementById('user-role-badge');
+    rb.textContent = role === 'admin' ? 'Admin' : 'User';
+    rb.className = 'role-badge ' + (role === 'admin' ? 'admin' : 'user');
+
+    if(role === 'admin'){
+      document.getElementById('nav-new').style.display = 'flex';
+      document.getElementById('nav-all').style.display = 'flex';
+      document.getElementById('nav-reports').style.display = 'flex';
+      document.getElementById('nav-timeframe').style.display = 'flex';
+      document.getElementById('nav-tech').style.display = 'flex';
+      document.getElementById('nav-items').style.display = 'flex';
+      document.getElementById('importBtn').style.display = 'inline-flex';
+      document.getElementById('importHint').style.display = 'block';
+      await showPanel('all', document.getElementById('nav-all'));
+    } else {
+      document.getElementById('nav-new').style.display = 'flex';
+      document.getElementById('nav-all').style.display = 'flex';
+      document.getElementById('nav-reports').style.display = 'flex';
+      document.getElementById('nav-timeframe').style.display = 'flex';
+      document.getElementById('nav-tech').style.display = 'flex';
+      document.getElementById('nav-items').style.display = 'none';
+      showPanel('new', document.getElementById('nav-new'));
+    }
+    hideLoading();
+  }
+
+  async function showPanel(name, el){
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    if(el) el.classList.add('active');
+    document.getElementById('page-title').textContent = name === 'new' ? 'New Complaint' : name === 'tech' ? 'Technicians' : name === 'items' ? 'Items' : name === 'reports' ? 'Reports' : name === 'timeframe' ? 'Time Frame' : 'All Complaints';
+    document.getElementById('refreshBtn').style.display = (name === 'all' || name === 'tech' || name === 'items' || name === 'reports' || name === 'timeframe') ? 'inline-flex' : 'none';
+    if(name === 'all') await refreshAndRenderList();
+    if(name === 'tech') await refreshAndRenderTechnicians();
+    if(name === 'items') await refreshAndRenderItems();
+    if(name === 'reports'){ await refreshAndRenderList(); renderReportsTable(); }
+    if(name === 'timeframe'){ await refreshAndRenderList(); renderTimeframeTable(); }
+  }
+
+  // ═══════════════════════════════════════
+  //  DATA LAYER — Render backend (replaces Google Sheets)
+  // ═══════════════════════════════════════
+  async function loadAllData(){
+    const all = await apiGet('/api/complaints/all');
+    COMPLAINTS = all.complaints; TECHNICIANS = all.technicians;
+    ITEMS = all.items; CUSTOMERS = all.customers;
+  }
+
+  async function addTechnician(){
+    const nameEl = document.getElementById('tech-name');
+    const numberEl = document.getElementById('tech-number');
+    const areaEl = document.getElementById('tech-area');
+    const name = nameEl.value.trim();
+    const number = numberEl.value.trim();
+    const area = areaEl.value.trim();
+
+    if(!name || !number){ showToast('Name and contact number are required'); return; }
+    if(TECHNICIANS.some(t => t.name.toLowerCase() === name.toLowerCase())){ showToast('That technician is already in the list'); return; }
+
+    showLoading('Adding technician…');
+    try{
+      await apiPost('/api/complaints/technicians', { name, number, area });
+      showToast('✅ Added ' + name);
+      nameEl.value = ''; numberEl.value = ''; areaEl.value = '';
+      await refreshAndRenderTechnicians();
+    }catch(e){
+      showToast('❌ Could not add technician: ' + e.message);
+    }
+    hideLoading();
+  }
+
+  async function addItem(){
+    const brandEl = document.getElementById('item-brand');
+    const itemEl = document.getElementById('item-name');
+    const brand = brandEl.value;
+    const itemName = itemEl.value.trim();
+
+    if(!brand || !itemName){ showToast('Brand and item name are required'); return; }
+    if(ITEMS.some(x => x.brand === brand && x.item.toLowerCase() === itemName.toLowerCase())){
+      showToast('That item already exists'); return;
+    }
+
+    showLoading('Adding item…');
+    try{
+      await apiPost('/api/complaints/items', { brand, item: itemName });
+      showToast('✅ Added ' + itemName);
+      itemEl.value = '';
+      await refreshAndRenderItems();
+    }catch(e){
+      showToast('❌ Could not add item: ' + e.message);
+    }
+    hideLoading();
+  }
+
+  async function refreshAndRenderItems(){
+    showLoading('Loading items…');
+    try{
+      await loadAllData();
+      setSyncStatus(true, 'Synced');
+    }catch(e){
+      setSyncStatus(false, 'Sync failed');
+      showToast('❌ Could not load items: ' + e.message);
+    }
+    hideLoading();
+    renderItems();
+  }
+
+  function renderItems(){
+    const tbody = document.getElementById('itemTableBody');
+    const emptyState = document.getElementById('itemEmptyState');
+    if(ITEMS.length === 0){
+      tbody.innerHTML = '';
+      emptyState.style.display = 'block';
+      return;
+    }
+    emptyState.style.display = 'none';
+    tbody.innerHTML = ITEMS.map(x => `
+      <tr>
+        <td><span class="badge ${BADGE_CLASS[x.brand] || ''}">${escapeHtml(x.brand)}</span></td>
+        <td>${escapeHtml(x.item)}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function refreshAndRenderTechnicians(){
+    showLoading('Loading technicians…');
+    try{
+      await loadAllData();
+      setSyncStatus(true, 'Synced');
+    }catch(e){
+      setSyncStatus(false, 'Sync failed');
+      showToast('❌ Could not load technicians: ' + e.message);
+    }
+    hideLoading();
+    renderTechnicians();
+  }
+
+  function renderTechnicians(){
+    const tbody = document.getElementById('techTableBody');
+    const emptyState = document.getElementById('techEmptyState');
+    if(TECHNICIANS.length === 0){
+      tbody.innerHTML = '';
+      emptyState.style.display = 'block';
+      return;
+    }
+    emptyState.style.display = 'none';
+    tbody.innerHTML = TECHNICIANS.map(t => `
+      <tr>
+        <td>${escapeHtml(t.name)}</td>
+        <td class="mono">${escapeHtml(t.number)}</td>
+        <td>${escapeHtml(t.area || '—')}</td>
+      </tr>
+    `).join('');
+  }
+
+  function refreshActivePanel(){
+    const activePanel = document.querySelector('.panel.active');
+    if(!activePanel) return;
+    if(activePanel.id === 'panel-all') refreshAndRenderList();
+    if(activePanel.id === 'panel-tech') refreshAndRenderTechnicians();
+    if(activePanel.id === 'panel-items') refreshAndRenderItems();
+    if(activePanel.id === 'panel-reports') refreshAndRenderList().then(renderReportsTable);
+    if(activePanel.id === 'panel-timeframe') refreshAndRenderList().then(renderTimeframeTable);
+  }
+
+  // ═══════════════════════════════════════
+  //  WHATSAPP NOTIFICATIONS (one-click via wa.me)
+  // ═══════════════════════════════════════
+  let waPending = [];
+
+  function toWaNumber(raw){
+    let digits = (raw || '').replace(/\D/g, '');
+    if(digits.length === 10) digits = '91' + digits;
+    return digits;
+  }
+  function waLink(phone, message){
+    return `https://wa.me/${toWaNumber(phone)}?text=${encodeURIComponent(message)}`;
+  }
+  let waWindowRef = null;
+  function openWhatsApp(phone, message){
+    const url = waLink(phone, message);
+    try{
+      if(waWindowRef && !waWindowRef.closed){
+        waWindowRef.location.href = url;
+        waWindowRef.focus();
+        return;
+      }
+    }catch(e){ /* cross-origin block from WhatsApp's side — fall through */ }
+    waWindowRef = window.open(url, 'wa_send_tab');
+  }
+  function showWaPrompt(title, buttons){
+    waPending = buttons;
+    document.getElementById('waModalTitle').textContent = title;
+    document.getElementById('waModalBody').innerHTML = buttons.map((b, i) => `
+      <button class="btn btn-inward" style="justify-content:center;padding:10px;width:100%;" onclick="sendWaPending(${i})">📱 ${escapeHtml(b.label)}</button>
+    `).join('');
+    document.getElementById('waModalBg').classList.add('open');
+  }
+  function sendWaPending(i){
+    const b = waPending[i];
+    if(!b) return;
+    if(!b.phone || toWaNumber(b.phone).length < 10){ showToast('❌ No valid phone number for this contact'); return; }
+    openWhatsApp(b.phone, b.message);
+  }
+  function closeWaModal(){ document.getElementById('waModalBg').classList.remove('open'); }
+
+  function msgRegistered(rec){
+    return `Hi ${rec.name}, your complaint ${rec.id} for ${rec.brand} - ${rec.product || 'your product'} has been registered. Our team will get back to you shortly. Thank you.`;
+  }
+  function msgRegisteredMulti(ticketIds, name, brand){
+    if(ticketIds.length === 1) return msgRegistered({ id: ticketIds[0], name, brand });
+    return `Hi ${name}, your complaints for ${brand} have been registered under tickets: ${ticketIds.join(', ')}. Our team will get back to you shortly. Thank you.`;
+  }
+  function msgTechAssigned(rec, tech){
+    return `Hi ${tech.name}, a new complaint has been assigned to you.\n\nTicket: ${rec.id}\nBrand: ${rec.brand}\nCustomer: ${rec.name}\nContact: ${rec.contact}\nAddress: ${rec.address || '-'}\nProduct: ${rec.product || '-'}\nComplaint: ${rec.complaint}\n\nPlease attend to this at the earliest.`;
+  }
+  function msgCustomerAssigned(rec, tech){
+    return `Hi ${rec.name}, your complaint ${rec.id} has been assigned to our technician ${tech.name} (${tech.number}). They will contact you shortly to resolve the issue.`;
+  }
+  function msgResolved(rec){
+    return `Hi ${rec.name}, your complaint ${rec.id} has been resolved. Thank you for your patience — we assure you the best service always.\n\n— ${rec.brand} Customer Care`;
+  }
+
+  function normContact(c){ return (c || '').replace(/\D/g, ''); }
+
+  function findCustomer(contact){
+    const norm = normContact(contact);
+    if(norm.length < 10) return null;
+    return CUSTOMERS.find(c => normContact(c.contact) === norm) || null;
+  }
+
+  function lookupCustomer(){
+    const contact = document.getElementById('f-contact').value.trim();
+    const match = findCustomer(contact);
+    if(match){
+      document.getElementById('f-name').value = match.name;
+      document.getElementById('f-address').value = match.address;
+      showToast('👤 Existing customer found — details auto-filled');
+    }
+  }
+
+  // ── New complaint form ──
+  function selectBrand(brand){
+    if(complaintGridRows.length > 0 && brand !== selectedBrand){
+      showToast('⚠️ Finish or clear the current items before switching brand');
+      return;
+    }
+    selectedBrand = brand;
+    document.querySelectorAll('.brand-pick').forEach(el=>{
+      el.classList.remove('sel-makkal','sel-elac','sel-vijay');
+      if(el.dataset.brand === brand) el.classList.add('sel-' + brand.toLowerCase());
+    });
+    populateItemDropdown();
+  }
+
+  function populateItemDropdown(){
+    const itemSel = document.getElementById('f-item');
+    itemSel.innerHTML = '<option value="">Select item</option>';
+    if(!selectedBrand) return;
+    const names = [...new Set(ITEMS.filter(x => x.brand === selectedBrand).map(x => x.item))];
+    names.forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n; opt.textContent = n;
+      itemSel.appendChild(opt);
+    });
+  }
+
+  // ── Multiple items/complaints in one visit, one page ──
+  // Customer details (brand/name/contact/address) are filled once; each row
+  // added here becomes its OWN complaint ticket on submit.
+  let complaintGridRows = [];
+
+  function addComplaintGridRow(){
+    const item = document.getElementById('f-item').value;
+    const color = document.getElementById('f-color').value.trim();
+    const complaint = document.getElementById('f-complaint').value.trim();
+
+    if(!selectedBrand){ showToast('Select a brand first'); return; }
+    if(!item){ showToast('Select an item'); return; }
+    if(!complaint){ showToast('Describe the complaint for this item'); return; }
+
+    const product = color ? `${item} - ${color}` : item;
+    complaintGridRows.push({ product, complaint });
+    renderComplaintGrid();
+
+    // Clear just the item/color/complaint fields so the next one can be added quickly
+    document.getElementById('f-item').value = '';
+    document.getElementById('f-color').value = '';
+    document.getElementById('f-complaint').value = '';
+  }
+
+  function removeComplaintGridRow(idx){
+    complaintGridRows.splice(idx, 1);
+    renderComplaintGrid();
+  }
+
+  function renderComplaintGrid(){
+    const wrap = document.getElementById('complaintGridWrap');
+    const tbody = document.getElementById('complaintGridBody');
+    if(complaintGridRows.length === 0){ wrap.style.display = 'none'; tbody.innerHTML=''; return; }
+    wrap.style.display = 'block';
+    tbody.innerHTML = complaintGridRows.map((r, i) => `
+      <tr>
+        <td class="mono">${i+1}</td>
+        <td>${escapeHtml(r.product)}</td>
+        <td colspan="2">${escapeHtml(r.complaint)}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="removeComplaintGridRow(${i})" title="Remove">×</button></td>
+      </tr>`).join('');
+  }
+
+  async function submitComplaint(){
+    const name = document.getElementById('f-name').value.trim();
+    const contact = document.getElementById('f-contact').value.trim();
+    const address = document.getElementById('f-address').value.trim();
+
+    if(!selectedBrand){ showToast('Select a brand first'); return; }
+    if(!name || !contact){ showToast('Name and contact are required'); return; }
+
+    // If the person filled the item/color/complaint fields but forgot to
+    // click "Add This Item", add it now rather than silently dropping it.
+    const pendingItem = document.getElementById('f-item').value;
+    const pendingComplaint = document.getElementById('f-complaint').value.trim();
+    if(pendingItem && pendingComplaint){
+      addComplaintGridRow();
+    }
+
+    if(complaintGridRows.length === 0){ showToast('Add at least one item/complaint'); return; }
+
+    showLoading('Saving ' + complaintGridRows.length + ' complaint(s)…');
+    const brandForMsg = selectedBrand;
+    const ticketIds = [];
+    try{
+      for(const row of complaintGridRows){
+        const resp = await apiPost('/api/complaints', {
+          brand: selectedBrand, name, contact, address,
+          product: row.product, complaint: row.complaint
+        });
+        ticketIds.push(resp.id);
+      }
+      await loadAllData(); // refresh local cache so the new complaints show up everywhere
+
+      hideLoading();
+      setSyncStatus(true, 'Synced');
+      showToast('✅ Logged ' + ticketIds.length + ' ticket(s): ' + ticketIds.join(', '));
+
+      ['f-name','f-contact','f-address','f-complaint','f-color'].forEach(id=>document.getElementById(id).value='');
+      document.getElementById('f-item').innerHTML = '<option value="">Select item</option>';
+      selectedBrand = null;
+      complaintGridRows = [];
+      renderComplaintGrid();
+      document.querySelectorAll('.brand-pick').forEach(el=> el.classList.remove('sel-makkal','sel-elac','sel-vijay'));
+
+      const ticketList = ticketIds.join(', ');
+      showWaPrompt('Complaints Registered — ' + ticketList, [
+        { label: `Notify ${name} (${contact})`, phone: contact,
+          message: msgRegisteredMulti(ticketIds, name, brandForMsg) }
+      ]);
+    }catch(e){
+      hideLoading();
+      setSyncStatus(false, 'Sync failed');
+      showToast('❌ Save failed after ' + ticketIds.length + ' of ' + complaintGridRows.length + ' ticket(s): ' + e.message);
+      if(ticketIds.length){
+        // Some tickets already saved before the failure — refresh so they show up,
+        // and don't silently re-add them to the grid (would duplicate on retry).
+        await loadAllData().catch(()=>{});
+      }
+    }
+  }
+
+  // ── All complaints list (admin) ──
+  function formatDate(iso){
+    if(!iso) return '—';
+    const d = new Date(iso);
+    if(isNaN(d)) return iso;
+    return d.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'}) + ' · ' + d.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+  }
+  function formatDuration(startIso, endIso){
+    if(!startIso || !endIso) return '—';
+    const start = new Date(startIso), end = new Date(endIso);
+    if(isNaN(start) || isNaN(end)) return '—';
+    let mins = Math.round((end - start) / 60000);
+    if(mins < 0) return '—';
+    const days = Math.floor(mins / 1440); mins -= days * 1440;
+    const hrs = Math.floor(mins / 60); mins -= hrs * 60;
+    const parts = [];
+    if(days) parts.push(days + 'd');
+    if(hrs) parts.push(hrs + 'h');
+    if(mins || parts.length === 0) parts.push(mins + 'm');
+    return parts.join(' ');
+  }
+  function statusClass(status){
+    if(status === 'Open') return 'open';
+    if(status === 'In Progress') return 'progress';
+    return 'resolved';
+  }
+  function escapeHtml(str){
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+  }
+
+  async function refreshAndRenderList(){
+    showLoading('Loading complaints…');
+    try{
+      await loadAllData();
+      setSyncStatus(true, 'Synced');
+    }catch(e){
+      setSyncStatus(false, 'Sync failed');
+      showToast('❌ Could not load complaints: ' + e.message);
+    }
+    hideLoading();
+    renderList();
+  }
+
+  function filterByStatCard(status){
+    document.getElementById('filter-status').value = status;
+    renderList();
+  }
+
+  function renderList(){
+    const list = COMPLAINTS;
+    document.getElementById('stat-total').textContent = list.length;
+    document.getElementById('stat-open').textContent = list.filter(r=>r.status==='Open').length;
+    document.getElementById('stat-progress').textContent = list.filter(r=>r.status==='In Progress').length;
+    document.getElementById('stat-resolved').textContent = list.filter(r=>r.status==='Resolved').length;
+
+    document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-filter'));
+    const statusFilterVal = document.getElementById('filter-status').value;
+    const activeId = statusFilterVal === 'Open' ? 'statcard-open' : statusFilterVal === 'In Progress' ? 'statcard-progress' : statusFilterVal === 'Resolved' ? 'statcard-resolved' : 'statcard-total';
+    document.getElementById(activeId).classList.add('active-filter');
+
+    const brandFilter = document.getElementById('filter-brand').value;
+    const statusFilter = document.getElementById('filter-status').value;
+    const search = document.getElementById('filter-search').value.toLowerCase();
+
+    let filtered = list.slice().reverse(); // newest first
+    if(brandFilter) filtered = filtered.filter(r => r.brand === brandFilter);
+    if(statusFilter) filtered = filtered.filter(r => r.status === statusFilter);
+    filtered = filtered.filter(r => inDateRange(r.loggedAt, 'complaints'));
+    if(search){
+      filtered = filtered.filter(r =>
+        r.name.toLowerCase().includes(search) ||
+        r.contact.toLowerCase().includes(search) ||
+        (r.product||'').toLowerCase().includes(search) ||
+        (r.assignedTo||'').toLowerCase().includes(search) ||
+        r.id.toLowerCase().includes(search)
+      );
+    }
+
+    const tbody = document.getElementById('ticketTableBody');
+    const emptyState = document.getElementById('emptyState');
+
+    if(filtered.length === 0){
+      tbody.innerHTML = '';
+      emptyState.style.display = 'block';
+      return;
+    }
+    emptyState.style.display = 'none';
+
+    tbody.innerHTML = filtered.map(r => `
+      <tr onclick="openDetail('${r.id}')">
+        <td class="mono">${r.id}</td>
+        <td>${formatDate(r.loggedAt)}</td>
+        <td><span class="badge ${BADGE_CLASS[r.brand] || ''}">${r.brand}</span></td>
+        <td>${escapeHtml(r.name)}</td>
+        <td class="mono">${escapeHtml(r.contact)}</td>
+        <td>${escapeHtml(r.product || '—')}</td>
+        <td onclick="event.stopPropagation();">
+          <select class="status-select" style="background:var(--paper);color:var(--ink);" onchange="updateAssignment('${r.id}', this.value)">
+            <option value="" ${!r.assignedTo?'selected':''}>Unassigned</option>
+            ${TECHNICIANS.map(t => `<option value="${escapeHtml(t.name)}" ${r.assignedTo===t.name?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
+          </select>
+        </td>
+        <td onclick="event.stopPropagation();">
+          <select class="status-select status-${statusClass(r.status)}" onchange="updateStatus('${r.id}', this.value)">
+            <option value="Open" ${r.status==='Open'?'selected':''}>Open</option>
+            ${r.status==='In Progress' ? '<option value="In Progress" selected disabled>In Progress</option>' : ''}
+            <option value="Resolved" ${r.status==='Resolved'?'selected':''}>Resolved</option>
+          </select>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function populateReportAssignedFilter(){
+    const sel = document.getElementById('rf-assigned');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All</option><option value="Unassigned">Unassigned</option>' +
+      TECHNICIANS.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}</option>`).join('');
+    sel.value = current;
+  }
+
+  function clearReportFilters(){
+    document.getElementById('rf-brand').value = '';
+    document.getElementById('rf-product').value = '';
+    document.getElementById('rf-assigned').value = '';
+    document.getElementById('rf-status').value = '';
+    clearDateFilter('reports');
+  }
+
+  function renderReportsTable(){
+    populateReportAssignedFilter();
+
+    const brandFilter = document.getElementById('rf-brand').value;
+    const productFilter = document.getElementById('rf-product').value.toLowerCase();
+    const assignedFilter = document.getElementById('rf-assigned').value;
+    const statusFilter = document.getElementById('rf-status').value;
+
+    let filtered = COMPLAINTS.slice().reverse();
+    if(brandFilter) filtered = filtered.filter(r => r.brand === brandFilter);
+    if(statusFilter) filtered = filtered.filter(r => r.status === statusFilter);
+    if(productFilter) filtered = filtered.filter(r => (r.product||'').toLowerCase().includes(productFilter));
+    if(assignedFilter) filtered = filtered.filter(r => assignedFilter === 'Unassigned' ? !r.assignedTo : r.assignedTo === assignedFilter);
+    filtered = filtered.filter(r => inDateRange(r.loggedAt, 'reports'));
+
+    document.getElementById('reportCountLine').textContent = filtered.length + ' of ' + COMPLAINTS.length + ' complaints';
+
+    const tbody = document.getElementById('reportTableBody');
+    const emptyState = document.getElementById('reportEmptyState');
+
+    if(filtered.length === 0){
+      tbody.innerHTML = '';
+      emptyState.style.display = 'block';
+      return;
+    }
+    emptyState.style.display = 'none';
+
+    tbody.innerHTML = filtered.map(r => `
+      <tr onclick="openDetail('${r.id}')">
+        <td class="mono">${r.id}</td>
+        <td>${formatDate(r.loggedAt)}</td>
+        <td><span class="badge ${BADGE_CLASS[r.brand] || ''}">${r.brand}</span></td>
+        <td>${escapeHtml(r.name)}</td>
+        <td class="mono">${escapeHtml(r.contact)}</td>
+        <td>${escapeHtml(r.product || '—')}</td>
+        <td>${escapeHtml(r.assignedTo || 'Unassigned')}</td>
+        <td><span class="badge status-${statusClass(r.status)}">${r.status}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderTimeframeTable(){
+    const days = parseInt(document.getElementById('tf-days').value, 10);
+    const now = Date.now();
+    const thresholdMs = days * 24 * 60 * 60 * 1000;
+
+    const rows = COMPLAINTS.filter(r => {
+      if(r.status === 'Resolved') return false;
+      if(!r.loggedAt) return false;
+      const logged = new Date(r.loggedAt).getTime();
+      if(isNaN(logged)) return false;
+      return (now - logged) > thresholdMs;
+    }).sort((a, b) => new Date(a.loggedAt) - new Date(b.loggedAt)); // oldest first
+
+    document.getElementById('tfCountLine').textContent = rows.length + ' complaint' + (rows.length===1?'':'s') + ' unresolved for more than ' + days + ' day' + (days===1?'':'s');
+
+    const tbody = document.getElementById('tfTableBody');
+    const emptyState = document.getElementById('tfEmptyState');
+
+    if(rows.length === 0){
+      tbody.innerHTML = '';
+      emptyState.style.display = 'block';
+      return;
+    }
+    emptyState.style.display = 'none';
+
+    tbody.innerHTML = rows.map(r => {
+      const daysOpen = Math.floor((now - new Date(r.loggedAt).getTime()) / 86400000);
+      return `
+        <tr>
+          <td class="mono"><a href="#" onclick="event.preventDefault(); openDetail('${r.id}');" style="color:var(--blue);text-decoration:underline;cursor:pointer;">${r.id}</a></td>
+          <td>${formatDate(r.loggedAt)}</td>
+          <td>${formatDate(r.assignedAt)}</td>
+          <td>${formatDate(r.resolvedAt)}</td>
+          <td><span class="badge status-${statusClass(r.status)}">${r.status}</span></td>
+          <td class="mono">${daysOpen}d</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  async function updateStatus(id, newStatus){
+    const rec = COMPLAINTS.find(r => r.id === id);
+    if(!rec) return;
+    showLoading('Updating status…');
+    try{
+      await apiPut('/api/complaints/' + encodeURIComponent(id) + '/status', { status: newStatus });
+      rec.status = newStatus;
+      rec.resolvedAt = newStatus === 'Resolved' ? new Date().toISOString() : (newStatus === 'Open' ? null : rec.resolvedAt);
+      setSyncStatus(true, 'Synced');
+      showToast(rec.id + ' marked ' + newStatus);
+
+      if(newStatus === 'Resolved'){
+        showWaPrompt('Complaint Resolved — ' + rec.id, [
+          { label: `Notify ${rec.name} (${rec.contact})`, phone: rec.contact, message: msgResolved(rec) }
+        ]);
+      }
+    }catch(e){
+      setSyncStatus(false, 'Sync failed');
+      showToast('❌ Update failed: ' + e.message);
+    }
+    hideLoading();
+    renderList();
+  }
+
+  async function updateAssignment(id, tech){
+    const rec = COMPLAINTS.find(r => r.id === id);
+    if(!rec) return;
+
+    showLoading('Updating assignment…');
+    try{
+      const resp = await apiPut('/api/complaints/' + encodeURIComponent(id) + '/assign', { technician: tech });
+      const newStatus = resp.status;
+      const assignedAt = (tech && !rec.assignedAt) ? new Date().toISOString() : rec.assignedAt;
+      rec.assignedTo = tech;
+      rec.status = newStatus;
+      rec.assignedAt = assignedAt;
+      setSyncStatus(true, 'Synced');
+      showToast(rec.id + (tech ? ' assigned to ' + tech + ' — marked In Progress' : ' unassigned — marked Open'));
+
+      if(tech){
+        const techObj = TECHNICIANS.find(t => t.name === tech);
+        if(techObj){
+          showWaPrompt('Technician Assigned — ' + rec.id, [
+            { label: `Notify Technician: ${techObj.name}`, phone: techObj.number, message: msgTechAssigned(rec, techObj) },
+            { label: `Notify Customer: ${rec.name}`, phone: rec.contact, message: msgCustomerAssigned(rec, techObj) }
+          ]);
+        }
+      }
+    }catch(e){
+      setSyncStatus(false, 'Sync failed');
+      showToast('❌ Update failed: ' + e.message);
+    }
+    hideLoading();
+    renderList();
+  }
+
+  function openDetail(id){
+    const r = COMPLAINTS.find(x => x.id === id);
+    if(!r) return;
+    document.getElementById('modalTicketId').textContent = r.id + ' — ' + r.brand;
+    document.getElementById('modalBody').innerHTML = `
+      <div class="detail-row"><div class="k">Customer Name</div><div class="v">${escapeHtml(r.name)}</div></div>
+      <div class="detail-row"><div class="k">Contact Number</div><div class="v">${escapeHtml(r.contact)}</div></div>
+      <div class="detail-row"><div class="k">Address</div><div class="v">${escapeHtml(r.address || '—')}</div></div>
+      <div class="detail-row"><div class="k">Product</div><div class="v">${escapeHtml(r.product || '—')}</div></div>
+      <div class="detail-row"><div class="k">Complaint</div><div class="v">${escapeHtml(r.complaint)}</div></div>
+      <div class="detail-row"><div class="k">Logged</div><div class="v">${formatDate(r.loggedAt)}</div></div>
+      <div class="detail-row"><div class="k">Assigned To</div><div class="v">${escapeHtml(r.assignedTo || 'Unassigned')}</div></div>
+      <div class="detail-row"><div class="k">Assigned On</div><div class="v">${formatDate(r.assignedAt)}${r.assignedAt ? ` <span style="color:var(--rule-dark);font-size:12px;">(${formatDuration(r.loggedAt, r.assignedAt)} after logged)</span>` : ''}</div></div>
+      <div class="detail-row"><div class="k">Status</div><div class="v"><span class="badge status-${statusClass(r.status)}">${r.status}</span></div></div>
+      <div class="detail-row"><div class="k">Resolved On</div><div class="v">${formatDate(r.resolvedAt)}${r.resolvedAt ? ` <span style="color:var(--rule-dark);font-size:12px;">(${formatDuration(r.loggedAt, r.resolvedAt)} total)</span>` : ''}</div></div>
+      <div class="detail-row">
+        <div class="k">WhatsApp</div>
+        <div class="v" style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
+          <button class="btn btn-ghost btn-sm" onclick="resendRegistered('${r.id}')">📱 Resend Registration to Customer</button>
+          ${r.assignedTo ? `<button class="btn btn-ghost btn-sm" onclick="resendAssignment('${r.id}')">📱 Resend Assignment Details</button>` : ''}
+          ${r.status === 'Resolved' ? `<button class="btn btn-ghost btn-sm" onclick="resendResolved('${r.id}')">📱 Resend Resolved Confirmation</button>` : ''}
+          <div style="display:flex;gap:6px;margin-top:4px;padding-top:8px;border-top:1px solid var(--rule);">
+            <input type="tel" id="wa-other-number" placeholder="Enter any number" style="flex:1;padding:6px 10px;border:1px solid var(--rule);border-radius:4px;font-size:13px;font-family:inherit;background:var(--paper);outline:none;">
+            <button class="btn btn-ghost btn-sm" onclick="sendToOtherNumber('${r.id}')">📱 WhatsApp</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('detailModalBg').classList.add('open');
+  }
+  function closeModal(){ document.getElementById('detailModalBg').classList.remove('open'); }
+
+  function sendToOtherNumber(id){
+    const r = COMPLAINTS.find(x => x.id === id);
+    if(!r) return;
+    const numberEl = document.getElementById('wa-other-number');
+    const number = numberEl.value.trim();
+    if(toWaNumber(number).length < 10){ showToast('❌ Enter a valid number (10 digits, or with country code)'); return; }
+
+    // Same set of message options as the customer/technician resend buttons,
+    // just aimed at whichever number was typed in.
+    const options = [
+      { label: 'Registration message', message: msgRegistered(r) },
+    ];
+    if(r.assignedTo){
+      const techObj = TECHNICIANS.find(t => t.name === r.assignedTo);
+      options.push({ label: 'Assignment details', message: techObj ? msgTechAssigned(r, techObj) : msgCustomerAssigned(r, { name: r.assignedTo, number: '' }) });
+    }
+    if(r.status === 'Resolved'){
+      options.push({ label: 'Resolved confirmation', message: msgResolved(r) });
+    }
+
+    showWaPrompt('Send to ' + number, options.map(o => ({ label: o.label, phone: number, message: o.message })));
+  }
+
+  function resendRegistered(id){
+    const r = COMPLAINTS.find(x => x.id === id);
+    if(!r) return;
+    showWaPrompt('Resend Registration — ' + r.id, [
+      { label: `Notify ${r.name} (${r.contact})`, phone: r.contact, message: msgRegistered(r) }
+    ]);
+  }
+  function resendAssignment(id){
+    const r = COMPLAINTS.find(x => x.id === id);
+    if(!r || !r.assignedTo) return;
+    const techObj = TECHNICIANS.find(t => t.name === r.assignedTo);
+    if(!techObj){ showToast('Technician details not found'); return; }
+    showWaPrompt('Resend Assignment — ' + r.id, [
+      { label: `Notify Technician: ${techObj.name}`, phone: techObj.number, message: msgTechAssigned(r, techObj) },
+      { label: `Notify Customer: ${r.name}`, phone: r.contact, message: msgCustomerAssigned(r, techObj) }
+    ]);
+  }
+  function resendResolved(id){
+    const r = COMPLAINTS.find(x => x.id === id);
+    if(!r) return;
+    showWaPrompt('Resend Resolved Confirmation — ' + r.id, [
+      { label: `Notify ${r.name} (${r.contact})`, phone: r.contact, message: msgResolved(r) }
+    ]);
+  }
+
+  function currentFilteredList(){
+    const brandFilter = document.getElementById('filter-brand').value;
+    const statusFilter = document.getElementById('filter-status').value;
+    const search = document.getElementById('filter-search').value.toLowerCase();
+    let filtered = COMPLAINTS.slice().reverse();
+    if(brandFilter) filtered = filtered.filter(r => r.brand === brandFilter);
+    if(statusFilter) filtered = filtered.filter(r => r.status === statusFilter);
+    filtered = filtered.filter(r => inDateRange(r.loggedAt, 'complaints'));
+    if(search){
+      filtered = filtered.filter(r =>
+        r.name.toLowerCase().includes(search) ||
+        r.contact.toLowerCase().includes(search) ||
+        (r.product||'').toLowerCase().includes(search) ||
+        (r.assignedTo||'').toLowerCase().includes(search) ||
+        r.id.toLowerCase().includes(search)
+      );
+    }
+    return filtered;
+  }
+
+  function exportCSV(){
+    const list = currentFilteredList();
+    if(list.length === 0){ showToast('No complaints to export'); return; }
+    const headers = ['Ticket ID','Brand','Name','Contact','Address','Product','Complaint','Assigned To','Status','Logged At','Assigned On','Resolved On','Turnaround (Logged→Resolved)'];
+    const rows = list.map(r => [r.id, r.brand, r.name, r.contact, r.address, r.product, r.complaint, r.assignedTo || 'Unassigned', r.status, formatDate(r.loggedAt), formatDate(r.assignedAt), formatDate(r.resolvedAt), formatDuration(r.loggedAt, r.resolvedAt)]);
+    let csv = headers.join(',') + '\n';
+    rows.forEach(row => { csv += row.map(cell => '"' + String(cell||'').replace(/"/g,'""') + '"').join(',') + '\n'; });
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'complaints_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportExcel(){
+    const list = currentFilteredList();
+    if(list.length === 0){ showToast('No complaints to export'); return; }
+    if(typeof XLSX === 'undefined'){ showToast('❌ Excel library not loaded — check your connection'); return; }
+    const headers = ['Ticket ID','Brand','Name','Contact','Address','Product','Complaint','Assigned To','Status','Logged At','Assigned On','Resolved On','Turnaround (Logged→Resolved)'];
+    const rows = list.map(r => [r.id, r.brand, r.name, r.contact, r.address, r.product, r.complaint, r.assignedTo || 'Unassigned', r.status, formatDate(r.loggedAt), formatDate(r.assignedAt), formatDate(r.resolvedAt), formatDuration(r.loggedAt, r.resolvedAt)]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = [{wch:10},{wch:10},{wch:18},{wch:14},{wch:24},{wch:20},{wch:36},{wch:16},{wch:12},{wch:20},{wch:20},{wch:20},{wch:22}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Complaints');
+    XLSX.writeFile(wb, 'complaints_' + new Date().toISOString().slice(0,10) + '.xlsx');
+    showToast('📗 Excel file downloaded');
+  }
+
+  // ── Bulk import historical complaints (from the old Google Sheet) ──
+  let complaintImportData = [];
+  function handleComplaintImportFile(file){
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wb = XLSX.read(e.target.result, { type:'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(ws, { defval:'' });
+      if(!data.length){ showToast('❌ No data found in that file'); document.getElementById('complaint-file-input').value=''; return; }
+      processComplaintImport(data);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function processComplaintImport(data){
+    const get = (row, keys) => { for(const k of keys){ if(row[k] !== undefined && row[k] !== '') return String(row[k]).trim(); } return ''; };
+    complaintImportData = data.map(row => ({
+      id:         get(row, ['ID','Ticket ID','TicketID','id']),
+      brand:      get(row, ['Brand','brand']),
+      name:       get(row, ['Name','name','Customer Name']),
+      contact:    get(row, ['Contact','contact','Phone']),
+      address:    get(row, ['Address','address']),
+      product:    get(row, ['Product','product']),
+      complaint:  get(row, ['Complaint','complaint']),
+      status:     get(row, ['Status','status']) || 'Open',
+      loggedAt:   get(row, ['LoggedAt','Logged At','logged_at']),
+      assignedTo: get(row, ['AssignedTo','Assigned To']),
+      assignedAt: get(row, ['AssignedAt','Assigned On','Assigned At']),
+      resolvedAt: get(row, ['ResolvedAt','Resolved On','Resolved At']),
+    })).filter(r => r.id && r.brand && r.name && r.contact && r.complaint);
+
+    const skippedForMissingFields = data.length - complaintImportData.length;
+    if(!complaintImportData.length){
+      showToast('❌ No valid rows — need Ticket ID, Brand, Name, Contact, and Complaint in every row.');
+      document.getElementById('complaint-file-input').value = '';
+      return;
+    }
+    const msg = `Import ${complaintImportData.length} complaint(s)?` +
+      (skippedForMissingFields ? ` (${skippedForMissingFields} row(s) skipped — missing required fields)` : '') +
+      `\n\nRows whose Ticket ID already exists in the system will be skipped, not overwritten.`;
+    if(!confirm(msg)){ complaintImportData = []; document.getElementById('complaint-file-input').value = ''; return; }
+    confirmComplaintImport();
+  }
+
+  async function confirmComplaintImport(){
+    if(!complaintImportData.length) return;
+    showLoading(`Importing ${complaintImportData.length} complaints…`);
+    try{
+      const resp = await apiPost('/api/complaints/bulk', { complaints: complaintImportData });
+      await loadAllData();
+      showToast(`✅ Imported ${resp.imported}` + (resp.skipped ? `, skipped ${resp.skipped} (already existed or invalid)` : ''));
+      renderList();
+    }catch(e){
+      showToast('❌ Import failed: ' + e.message);
+    }
+    complaintImportData = [];
+    hideLoading();
+    document.getElementById('complaint-file-input').value = '';
+  }
+</script>
+</body>
+</html>
