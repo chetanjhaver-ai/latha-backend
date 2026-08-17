@@ -159,6 +159,9 @@ CREATE TABLE IF NOT EXISTS gdb_warehouses (
   name TEXT NOT NULL DEFAULT '',
   seq BIGSERIAL
 );
+-- Per-godown permission: may received bills be typed in by hand? OFF by
+-- default — the admin flips it on temporarily when a correction requires it.
+ALTER TABLE gdb_warehouses ADD COLUMN IF NOT EXISTS manual_bills BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS gdb_errors (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL DEFAULT '',
@@ -197,7 +200,9 @@ const SHEETS = {
   Customers:    { table: 'gdb_customers',     cols: ['id','name','phone','area','type','warehouse'] },
   DailySheets:  { table: 'gdb_daily_sheets',  cols: ['id','ref_no','date','bill_groups_json','saved_by','saved_at'] },
   Users:        { table: 'gdb_users',         cols: ['id','username','password','name','email','role','warehouse','active'] },
-  Warehouses:   { table: 'gdb_warehouses',    cols: ['id','name'] },
+  // manual_bills appended at the END on purpose (same rule as Transactions'
+  // driver/helpers) — older screens send 2-col rows and this lands FALSE.
+  Warehouses:   { table: 'gdb_warehouses',    cols: ['id','name','manual_bills'] },
   IgnoredBills: { table: 'gdb_ignored_bills', cols: ['id','prefix','num','bill_no','ignored_by','ignored_at','reason'] },
   // The error register — every duplicate the system BLOCKS gets recorded
   // here (instead of silently vanishing), so mistakes stay visible until
@@ -209,9 +214,13 @@ const SHEETS = {
 
 const NUMERIC_COLS = new Set(['qty','opening','min_level','value','num']);
 const BOOLEAN_COLS = new Set(['active']);
+// Booleans that default to FALSE when absent/empty ('active' defaults TRUE —
+// a permission must never silently switch itself on the same way).
+const BOOLEAN_FALSE_COLS = new Set(['manual_bills']);
 
 function coerce(col, v) {
   if (NUMERIC_COLS.has(col)) return Number(v) || 0;
+  if (BOOLEAN_FALSE_COLS.has(col)) return v === true || String(v).toLowerCase() === 'true';
   if (BOOLEAN_COLS.has(col)) return !(v === false || String(v).toLowerCase() === 'false');
   return v == null ? '' : String(v);
 }

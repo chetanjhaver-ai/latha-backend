@@ -207,6 +207,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
       <div class="nav-label">Manage</div>
       <div class="nav-item" id="nav-tech" onclick="showPanel('tech',this)"><span class="nav-icon">🔧</span> Technicians</div>
       <div class="nav-item" id="nav-items" onclick="showPanel('items',this)"><span class="nav-icon">📦</span> Items</div>
+      <div class="nav-item" id="nav-users" onclick="showPanel('users',this)" style="display:none;"><span class="nav-icon">👤</span> Users</div>
     </div>
     <div class="nav-spacer"></div>
     <div class="sidebar-footer">
@@ -484,6 +485,45 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
         <div class="empty-state" id="itemEmptyState" style="display:none;">No items added yet</div>
       </div>
 
+      <!-- USERS PANEL (admin only) -->
+      <div class="panel" id="panel-users">
+        <div class="form-card" style="margin-bottom:20px;">
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Username</label>
+              <input type="text" id="user-username" placeholder="login name (lowercase)" autocapitalize="none">
+            </div>
+            <div class="form-row">
+              <label>Full Name</label>
+              <input type="text" id="user-fullname" placeholder="Display name">
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Password</label>
+              <input type="text" id="user-password" placeholder="Initial password" autocomplete="off">
+            </div>
+            <div class="form-row">
+              <label>Role</label>
+              <select id="user-role">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-inward" style="width:100%;justify-content:center;padding:10px;" onclick="addUserAccount()">＋ Add User</button>
+        </div>
+        <div class="section-header"><h2>User Accounts</h2></div>
+        <table class="ledger-table">
+          <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+        <div class="empty-state" id="usersEmptyState" style="display:none;">No users found</div>
+        <div style="font-size:12px;color:var(--rule-dark);margin-top:10px;">
+          Disabling a user blocks their login immediately but keeps their history — this is the safe way to "delete" someone.
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -637,7 +677,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
     showLoading('Loading…');
     try {
       const me = await apiGet('/api/auth/me'); // a 401 here triggers signOut → back to /crm
-      currentUser = { email: me.user.email, name: me.user.name, role: me.user.role };
+      currentUser = { email: me.user.email, name: me.user.name, role: me.user.role, username: me.user.username };
       const all = await apiGet('/api/complaints/all');
       COMPLAINTS = all.complaints; TECHNICIANS = all.technicians;
       ITEMS = all.items; CUSTOMERS = all.customers;
@@ -680,7 +720,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
     try {
       const j = await apiPost('/api/auth/login', { username, password });
       setToken(j.token);
-      currentUser = { email: j.email, name: j.name, role: j.role };
+      currentUser = { email: j.email, name: j.name, role: j.role, username };
 
       showLoading('Loading complaints…');
       const all = await apiGet('/api/complaints/all');
@@ -725,6 +765,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
       document.getElementById('nav-timeframe').style.display = 'flex';
       document.getElementById('nav-tech').style.display = 'flex';
       document.getElementById('nav-items').style.display = 'flex';
+      document.getElementById('nav-users').style.display = 'flex';
       document.getElementById('importBtn').style.display = 'inline-flex';
       document.getElementById('importHint').style.display = 'block';
       await showPanel('all', document.getElementById('nav-all'));
@@ -735,6 +776,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
       document.getElementById('nav-timeframe').style.display = 'flex';
       document.getElementById('nav-tech').style.display = 'flex';
       document.getElementById('nav-items').style.display = 'none';
+      document.getElementById('nav-users').style.display = 'none';
       showPanel('new', document.getElementById('nav-new'));
     }
     hideLoading();
@@ -745,9 +787,10 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
     document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
     document.getElementById('panel-' + name).classList.add('active');
     if(el) el.classList.add('active');
-    document.getElementById('page-title').textContent = name === 'new' ? 'New Complaint' : name === 'tech' ? 'Technicians' : name === 'items' ? 'Items' : name === 'reports' ? 'Reports' : name === 'timeframe' ? 'Time Frame' : 'All Complaints';
-    document.getElementById('refreshBtn').style.display = (name === 'all' || name === 'tech' || name === 'items' || name === 'reports' || name === 'timeframe') ? 'inline-flex' : 'none';
+    document.getElementById('page-title').textContent = name === 'new' ? 'New Complaint' : name === 'tech' ? 'Technicians' : name === 'items' ? 'Items' : name === 'users' ? 'Users' : name === 'reports' ? 'Reports' : name === 'timeframe' ? 'Time Frame' : 'All Complaints';
+    document.getElementById('refreshBtn').style.display = (name === 'all' || name === 'tech' || name === 'items' || name === 'users' || name === 'reports' || name === 'timeframe') ? 'inline-flex' : 'none';
     if(name === 'all') await refreshAndRenderList();
+    if(name === 'users') await refreshAndRenderUsers();
     if(name === 'tech') await refreshAndRenderTechnicians();
     if(name === 'items') await refreshAndRenderItems();
     if(name === 'reports'){ await refreshAndRenderList(); renderReportsTable(); }
@@ -870,12 +913,105 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--
     `).join('');
   }
 
+  // ═══════════════════════════════════════
+  //  USER ACCOUNTS (admin only) — uses the backend's /api/admin/users
+  // ═══════════════════════════════════════
+  let USERS = [];
+
+  async function refreshAndRenderUsers(){
+    try {
+      USERS = await apiGet('/api/admin/users');
+      renderUsers();
+    } catch(e) {
+      showToast('❌ ' + e.message);
+    }
+  }
+
+  function renderUsers(){
+    const tbody = document.getElementById('usersTableBody');
+    const emptyState = document.getElementById('usersEmptyState');
+    if(USERS.length === 0){
+      tbody.innerHTML = '';
+      emptyState.style.display = 'block';
+      return;
+    }
+    emptyState.style.display = 'none';
+    tbody.innerHTML = USERS.map(u => {
+      const isSelf = u.username === currentUser.username;
+      return `
+      <tr style="${u.active ? '' : 'opacity:0.5;'}">
+        <td class="mono">${escapeHtml(u.username)}${isSelf ? ' <span style="font-size:11px;color:var(--rule-dark);">(you)</span>' : ''}</td>
+        <td>${escapeHtml(u.name)}</td>
+        <td>${u.role === 'admin' ? '<span class="role-badge admin">Admin</span>' : '<span class="role-badge user">User</span>'}</td>
+        <td>${u.active ? '✅ Active' : '🚫 Disabled'}</td>
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="btn" style="padding:5px 10px;font-size:12px;" onclick="resetUserPassword('${u.id}')">🔑 Reset Password</button>
+          ${isSelf ? '' : `<button class="btn" style="padding:5px 10px;font-size:12px;" onclick="toggleUserActive('${u.id}', ${u.active ? 'false' : 'true'})">${u.active ? '🚫 Disable' : '✅ Enable'}</button>`}
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  async function addUserAccount(){
+    const username = document.getElementById('user-username').value.trim().toLowerCase();
+    const name = document.getElementById('user-fullname').value.trim();
+    const password = document.getElementById('user-password').value.trim();
+    const role = document.getElementById('user-role').value;
+    if(!username || !name || !password){
+      showToast('Username, full name and password are all required.');
+      return;
+    }
+    try {
+      await apiPost('/api/admin/users', { username, name, password, role, email: '' });
+      document.getElementById('user-username').value = '';
+      document.getElementById('user-fullname').value = '';
+      document.getElementById('user-password').value = '';
+      document.getElementById('user-role').value = 'user';
+      showToast('✅ User "' + username + '" created');
+      await refreshAndRenderUsers();
+    } catch(e) {
+      showToast('❌ ' + e.message);
+    }
+  }
+
+  async function resetUserPassword(id){
+    const u = USERS.find(x => x.id === id);
+    if(!u) return;
+    const pw = prompt('New password for "' + u.username + '":');
+    if(pw === null) return;
+    const clean = pw.trim();
+    if(clean.length < 4){ showToast('Password too short.'); return; }
+    try {
+      await apiPut('/api/admin/users/' + id, {
+        name: u.name, email: u.email || '', role: u.role,
+        warehouse: u.warehouse || null, active: u.active, password: clean
+      });
+      showToast('✅ Password updated for ' + u.username);
+    } catch(e) {
+      showToast('❌ ' + e.message);
+    }
+  }
+
+  async function toggleUserActive(id, active){
+    const u = USERS.find(x => x.id === id);
+    if(!u) return;
+    if(!active && !confirm('Disable "' + u.username + '"? They will no longer be able to log in.')) return;
+    try {
+      await apiPut('/api/admin/users/' + id + '/active', { active });
+      showToast(active ? '✅ ' + u.username + ' enabled' : '🚫 ' + u.username + ' disabled');
+      await refreshAndRenderUsers();
+    } catch(e) {
+      showToast('❌ ' + e.message);
+    }
+  }
+
   function refreshActivePanel(){
     const activePanel = document.querySelector('.panel.active');
     if(!activePanel) return;
     if(activePanel.id === 'panel-all') refreshAndRenderList();
     if(activePanel.id === 'panel-tech') refreshAndRenderTechnicians();
     if(activePanel.id === 'panel-items') refreshAndRenderItems();
+    if(activePanel.id === 'panel-users') refreshAndRenderUsers();
     if(activePanel.id === 'panel-reports') refreshAndRenderList().then(renderReportsTable);
     if(activePanel.id === 'panel-timeframe') refreshAndRenderList().then(renderTimeframeTable);
   }

@@ -765,7 +765,7 @@ body.is-admin .nav-section.admin-only { display: block; }
           <button class="btn btn-primary btn-sm" onclick="addWarehouse()">+ Add Warehouse</button>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13px;max-width:600px;margin-bottom:28px;">
-          <thead><tr style="background:var(--paper);"><th style="padding:6px 8px;text-align:left;">Name</th><th style="padding:6px 8px;text-align:left;" class="no-print">Action</th></tr></thead>
+          <thead><tr style="background:var(--paper);"><th style="padding:6px 8px;text-align:left;">Name</th><th style="padding:6px 8px;text-align:left;">Manual Bill Entry</th><th style="padding:6px 8px;text-align:left;" class="no-print">Action</th></tr></thead>
           <tbody id="warehouses-body"></tbody>
         </table>
 
@@ -1082,6 +1082,11 @@ body.is-admin .nav-section.admin-only { display: block; }
         </div>
       </div>
 
+      <div id="ab-manual-disabled" style="display:none;background:#FFF7ED;border:1px solid #FDBA74;border-radius:6px;padding:14px 16px;">
+        <div style="font-weight:600;color:#B45309;margin-bottom:6px;">🔒 Manual bill entry is disabled for this godown</div>
+        <div style="font-size:13px;color:#7A4B12;margin-bottom:10px;">Received bills come in through the sales-order Excel import. If hand-typing is genuinely needed (e.g. to fix an error), an admin can enable it temporarily in Users &amp; Warehouses.</div>
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('ab-file-input').click()">📤 Upload Excel</button>
+      </div>
       <div id="ab-manual-area">
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;" id="ab-grid">
@@ -1678,7 +1683,10 @@ async function loadAllData() {
       warehouse:String(r[6]||''), active: r[7]===false||r[7]==='FALSE'||r[7]==='false' ? false : true
     })).filter(u=>u.id && u.username);
     DB.warehouses = (j.warehouses||[]).map(r=>({
-      id:String(r[0]||''), name:String(r[1]||'')
+      id:String(r[0]||''), name:String(r[1]||''),
+      // Per-godown permission: manual typing of received bills. Strictly
+      // opt-in — anything other than an explicit true means DISABLED.
+      manualBills: r[2]===true || String(r[2]).toLowerCase()==='true'
     })).filter(w=>w.id && w.name);
     // Bill numbers an admin has deliberately dismissed from the Missing
     // Bills warning — kept server-side so it stays dismissed for every
@@ -2444,6 +2452,20 @@ async function saveBill() {
   const validRows=gridRows.filter(r=>r.qty>0);
   if(!validRows.length){alert('Enter quantity for at least one item.');return;}
 
+  // Transport gate — every outward delivery MUST record who took it:
+  // a driver and at least one helper. Without both, the delivery note
+  // cannot be saved or printed.
+  if (currentBillType==='OUT') {
+    const t = getSelectedTransport();
+    if (!t.driver || !t.helpers) {
+      const missing = [!t.driver ? 'a driver' : null, !t.helpers ? 'at least one helper' : null].filter(Boolean).join(' and ');
+      alert(`🚚 Driver & helper required.\n\nSelect ${missing} before this delivery note can be saved.\n\nIf the person isn't in the list, ask your admin to add them (Users & Warehouses).`);
+      const dSel = document.getElementById('b-driver');
+      if (!t.driver && dSel) dSel.focus();
+      return;
+    }
+  }
+
   // E-way bill gate — bills above the govt threshold MUST have a valid
   // 12-digit e-way number before the delivery note can be saved/printed.
   const ewayMap = collectEwayNumbers();
@@ -2959,7 +2981,10 @@ function cancelImport(){importData=[];document.getElementById('import-preview-ar
 // actually in Transactions rather than needing a fresh save — reuses the
 // exact same grouped template printOutwardBill already builds.
 function reprintOutwardBill(billGroup) {
-  const txns = DB.transactions.filter(t=>t.billGroup===billGroup);
+  // The By-Bill view passes the internal billGroup id; the By-Delivery view
+  // passes the delivery reference (e.g. MOODC0085). Accept either, so Print
+  // works from both screens.
+  const txns = DB.transactions.filter(t=>t.billGroup===billGroup || t.deliveryRef===billGroup);
   if (!txns.length) { showToast('⚠️ No saved data found for this delivery.'); return; }
   const printWin = window.open('', '_blank');
   if (!printWin) { showToast('⚠️ Pop-up blocked — allow pop-ups for this site'); return; }
@@ -4164,16 +4189,44 @@ function renderWarehouses() {
   const tbody = document.getElementById('warehouses-body');
   if (!tbody) return;
   if (!DB.warehouses.length) {
-    tbody.innerHTML = `<tr><td colspan="2" style="padding:16px;text-align:center;color:var(--rule-dark);">No warehouses yet — add one above.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--rule-dark);">No warehouses yet — add one above.</td></tr>`;
     return;
   }
   tbody.innerHTML = DB.warehouses.map(w => `
     <tr>
       <td style="padding:6px 8px;border-bottom:1px solid var(--rule);"><strong>${w.name}</strong></td>
+      <td style="padding:6px 8px;border-bottom:1px solid var(--rule);">
+        <button class="btn btn-ghost btn-sm" onclick="toggleManualBills('${w.id}')"
+          title="Manual typing of received bills for ${w.name} — Excel/sales-order import always works either way"
+          style="${w.manualBills ? 'color:#B45309;font-weight:600;' : 'color:var(--rule-dark);'}">
+          ${w.manualBills ? '🔓 Enabled' : '🔒 Disabled'}
+        </button>
+      </td>
       <td style="padding:6px 8px;border-bottom:1px solid var(--rule);" class="no-print">
         <button class="btn btn-ghost btn-sm" style="color:#B42318;" onclick="deleteWarehouseRow('${w.id}','${w.name.replace(/'/g,"\\'")}')">🗑 Remove</button>
       </td>
     </tr>`).join('');
+}
+
+// Admin permission switch: may received bills be typed in by hand at this
+// godown? OFF by default; the admin enables it briefly when an error or a
+// missing sales-order file makes hand-entry genuinely necessary.
+async function toggleManualBills(id) {
+  if (!isAdmin()) { showToast('⛔ Admin only'); return; }
+  const w = DB.warehouses.find(x=>x.id===id);
+  if (!w) return;
+  const newVal = !w.manualBills;
+  if (newVal && !confirm(`Enable MANUAL typing of received bills for "${w.name}"?\n\nNormally bills should come in through the Excel/sales-order import. Enable this only while it's needed, then disable it again.`)) return;
+  try {
+    await gbUpdateRange('data','Warehouses', id, 2, [[newVal]]);
+    w.manualBills = newVal;
+    renderWarehouses();
+    showToast(newVal ? `🔓 Manual bill entry ENABLED for ${w.name}` : `🔒 Manual bill entry disabled for ${w.name}`);
+  } catch(e) { showToast('❌ ' + e.message); }
+}
+
+function manualBillsAllowedFor(warehouseName) {
+  return DB.warehouses.find(w=>w.name===warehouseName)?.manualBills === true;
 }
 
 async function addWarehouse() {
@@ -4382,6 +4435,14 @@ function handleBillsFile(file) {
       return;
     }
 
+    // A file WITHOUT an Item column just fills the hand-typing grid — so it
+    // counts as manual entry and follows the same per-godown permission.
+    if (!abManualAllowed) {
+      alert('🔒 This file has no Item column, so it would go through manual-style entry — which is disabled for this godown.\n\nUpload the full sales-order file (with item details), or ask an admin to enable manual entry temporarily in Users & Warehouses.');
+      document.getElementById('ab-file-input').value = '';
+      return;
+    }
+
     const parsed = data.map(row=>({
       billNo:   get(row,['Bill No','BillNo','Bill No.','Invoice','Invoice No','INVOICE','BILL NO']),
       customer: get(row,['Customer','Customer Name','Party','CUSTOMER','Party Name']),
@@ -4525,6 +4586,7 @@ function validateAndPreviewBillImport(rows) {
     previewEl.style.display = 'none';
     manualArea.style.display = 'none';
     manualFooter.style.display = 'none';
+    document.getElementById('ab-manual-disabled').style.display = abManualAllowed ? 'none' : 'block';
     richImportData = null;
     return;
   }
@@ -4540,6 +4602,7 @@ function validateAndPreviewBillImport(rows) {
   errEl.style.display = 'none';
   manualArea.style.display = 'none';
   manualFooter.style.display = 'none';
+  document.getElementById('ab-manual-disabled').style.display = 'none';
   previewEl.style.display = 'block';
   document.getElementById('ab-import-count').textContent = `(${richImportData.length} bill${richImportData.length>1?'s':''})`;
   document.getElementById('ab-import-preview-body').innerHTML = richImportData.map(b=>`
@@ -4612,19 +4675,30 @@ function cancelRichBillsImport() {
   richImportData = null;
   document.getElementById('ab-import-errors').style.display = 'none';
   document.getElementById('ab-import-preview').style.display = 'none';
-  document.getElementById('ab-manual-area').style.display = 'block';
-  document.getElementById('ab-manual-footer').style.display = 'flex';
+  document.getElementById('ab-manual-area').style.display = abManualAllowed ? 'block' : 'none';
+  document.getElementById('ab-manual-footer').style.display = abManualAllowed ? 'flex' : 'none';
+  document.getElementById('ab-manual-disabled').style.display = abManualAllowed ? 'none' : 'block';
 }
 
 
+// Whether the hand-typing grid is allowed for the godown this modal is
+// writing to — set every time the modal opens, from the admin permission.
+let abManualAllowed = false;
+
 function openAddBillModal() {
+  // Which godown will these bills be saved to? (Also forces an admin on
+  // "All Godowns" to pick one before entering anything.)
+  const wh = requireWarehouseForWrite();
+  if (!wh) return;
+  abManualAllowed = manualBillsAllowedFor(wh);
   // Reset any leftover rich-import preview/error state from a previous attempt
   richImportData = null;
   manualBillItems = {};
   document.getElementById('ab-import-errors').style.display = 'none';
   document.getElementById('ab-import-preview').style.display = 'none';
-  document.getElementById('ab-manual-area').style.display = 'block';
-  document.getElementById('ab-manual-footer').style.display = 'flex';
+  document.getElementById('ab-manual-area').style.display = abManualAllowed ? 'block' : 'none';
+  document.getElementById('ab-manual-footer').style.display = abManualAllowed ? 'flex' : 'none';
+  document.getElementById('ab-manual-disabled').style.display = abManualAllowed ? 'none' : 'block';
   // Populate customer datalist
   const custList = document.getElementById('ab-customer-list');
   custList.innerHTML = getCustomerList().map(c=>`<option value="${c}">`).join('');
@@ -4632,10 +4706,20 @@ function openAddBillModal() {
   document.getElementById('ab-rows').innerHTML = '';
   for (let i=0; i<10; i++) addBillRow();
   openModal('addbill');
-  setTimeout(()=>document.querySelector('.ab-billno-input')?.focus(), 100);
+  if (abManualAllowed) setTimeout(()=>document.querySelector('.ab-billno-input')?.focus(), 100);
 }
 
 async function saveReceivedBills() {
+  // Permission backstop — the grid shouldn't even be visible when manual
+  // entry is off, but never trust the UI alone for a rule like this.
+  {
+    const whCheck = requireWarehouseForWrite();
+    if (!whCheck) return;
+    if (!manualBillsAllowedFor(whCheck)) {
+      alert(`🔒 Manual bill entry is disabled for ${whCheck}.\n\nUpload the sales-order Excel instead. If hand-typing is genuinely needed, an admin can enable it temporarily in Users & Warehouses.`);
+      return;
+    }
+  }
   const billRows = [...document.querySelectorAll('#ab-rows tr')].map(tr=>({
     rowId:    tr.dataset.rowId,
     billNo:   tr.querySelector('.ab-billno-input')?.value?.trim()||'',
