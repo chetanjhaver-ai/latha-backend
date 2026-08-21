@@ -6,6 +6,11 @@ const authRoutes = require('./routes/auth');
 const { cleanupExpiredSessions } = require('./services/authService');
 
 const app = express();
+// Gzip every response (JSON + served pages). The data JSON compresses
+// ~10×, which cuts bandwidth usage by the same factor and makes loads
+// noticeably faster on slow godown connections. Browsers decompress
+// automatically — nothing else changes anywhere.
+app.use(require('compression')());
 app.use(cors());
 app.use(express.json());
 

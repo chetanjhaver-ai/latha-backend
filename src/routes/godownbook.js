@@ -162,6 +162,9 @@ CREATE TABLE IF NOT EXISTS gdb_warehouses (
 -- Per-godown permission: may received bills be typed in by hand? OFF by
 -- default — the admin flips it on temporarily when a correction requires it.
 ALTER TABLE gdb_warehouses ADD COLUMN IF NOT EXISTS manual_bills BOOLEAN NOT NULL DEFAULT FALSE;
+-- Per-godown permission: may godown users edit their own saved entries?
+-- OFF by default — corrections go through admin unless deliberately opened.
+ALTER TABLE gdb_warehouses ADD COLUMN IF NOT EXISTS user_edit BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS gdb_errors (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL DEFAULT '',
@@ -200,9 +203,10 @@ const SHEETS = {
   Customers:    { table: 'gdb_customers',     cols: ['id','name','phone','area','type','warehouse'] },
   DailySheets:  { table: 'gdb_daily_sheets',  cols: ['id','ref_no','date','bill_groups_json','saved_by','saved_at'] },
   Users:        { table: 'gdb_users',         cols: ['id','username','password','name','email','role','warehouse','active'] },
-  // manual_bills appended at the END on purpose (same rule as Transactions'
-  // driver/helpers) — older screens send 2-col rows and this lands FALSE.
-  Warehouses:   { table: 'gdb_warehouses',    cols: ['id','name','manual_bills'] },
+  // manual_bills/user_edit appended at the END on purpose (same rule as
+  // Transactions' driver/helpers) — older screens send shorter rows and
+  // these land FALSE.
+  Warehouses:   { table: 'gdb_warehouses',    cols: ['id','name','manual_bills','user_edit'] },
   IgnoredBills: { table: 'gdb_ignored_bills', cols: ['id','prefix','num','bill_no','ignored_by','ignored_at','reason'] },
   // The error register — every duplicate the system BLOCKS gets recorded
   // here (instead of silently vanishing), so mistakes stay visible until
@@ -216,7 +220,7 @@ const NUMERIC_COLS = new Set(['qty','opening','min_level','value','num']);
 const BOOLEAN_COLS = new Set(['active']);
 // Booleans that default to FALSE when absent/empty ('active' defaults TRUE —
 // a permission must never silently switch itself on the same way).
-const BOOLEAN_FALSE_COLS = new Set(['manual_bills']);
+const BOOLEAN_FALSE_COLS = new Set(['manual_bills','user_edit']);
 
 function coerce(col, v) {
   if (NUMERIC_COLS.has(col)) return Number(v) || 0;

@@ -765,7 +765,7 @@ body.is-admin .nav-section.admin-only { display: block; }
           <button class="btn btn-primary btn-sm" onclick="addWarehouse()">+ Add Warehouse</button>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13px;max-width:600px;margin-bottom:28px;">
-          <thead><tr style="background:var(--paper);"><th style="padding:6px 8px;text-align:left;">Name</th><th style="padding:6px 8px;text-align:left;">Manual Bill Entry</th><th style="padding:6px 8px;text-align:left;" class="no-print">Action</th></tr></thead>
+          <thead><tr style="background:var(--paper);"><th style="padding:6px 8px;text-align:left;">Name</th><th style="padding:6px 8px;text-align:left;">Manual Bill Entry</th><th style="padding:6px 8px;text-align:left;">User Editing</th><th style="padding:6px 8px;text-align:left;" class="no-print">Action</th></tr></thead>
           <tbody id="warehouses-body"></tbody>
         </table>
 
@@ -1451,8 +1451,14 @@ function isAdmin(){
   return currentUser.role === 'admin';
 }
 function canEdit(billCreatorEmail){
-  if(isAdmin()) return true;
-  // If no creator email recorded (old bills) — allow all logged-in users to edit
+  // Admin edits anything. Godown users may edit their OWN entries only if
+  // the admin has switched "User Editing" ON for their godown (Users &
+  // Warehouses) — it starts OFF, so by default every correction goes
+  // through admin. Deletes are admin-only regardless of this switch.
+  if (isAdmin()) return true;
+  const w = DB.warehouses.find(x=>x.name===currentUser.warehouse);
+  if (!w || w.userEdit !== true) return false;
+  // Switch is ON for this godown — old own-entry rules apply:
   if(!billCreatorEmail || billCreatorEmail.trim()==='') return true;
   if(!currentUser.email) return false;
   return currentUser.email.toLowerCase()===billCreatorEmail.toLowerCase();
@@ -1634,8 +1640,10 @@ function toISOStr(v) {
   if (v instanceof Date) return v.toISOString();
   return String(v);
 }
-async function loadAllData() {
-  showLoading('Loading data…'); setSyncStatus('syncing','Syncing…');
+async function loadAllData(opts) {
+  const silent = !!(opts && opts.silent);
+  if (!silent) showLoading('Loading data…');
+  setSyncStatus('syncing','Syncing…');
   try {
     const j = await gbApiGet('readAll');
     DB.items = (j.items||[]).map(r=>({
@@ -1684,9 +1692,10 @@ async function loadAllData() {
     })).filter(u=>u.id && u.username);
     DB.warehouses = (j.warehouses||[]).map(r=>({
       id:String(r[0]||''), name:String(r[1]||''),
-      // Per-godown permission: manual typing of received bills. Strictly
-      // opt-in — anything other than an explicit true means DISABLED.
-      manualBills: r[2]===true || String(r[2]).toLowerCase()==='true'
+      // Per-godown permissions. Strictly opt-in — anything other than an
+      // explicit true means DISABLED.
+      manualBills: r[2]===true || String(r[2]).toLowerCase()==='true',
+      userEdit:    r[3]===true || String(r[3]).toLowerCase()==='true'
     })).filter(w=>w.id && w.name);
     // Bill numbers an admin has deliberately dismissed from the Missing
     // Bills warning — kept server-side so it stays dismissed for every
@@ -1712,9 +1721,15 @@ async function loadAllData() {
       active: r[4]===false||String(r[4]).toLowerCase()==='false' ? false : true
     })).filter(s=>s.id&&s.name);
     applyWarehouseScope();
+    lastDataLoadAt = Date.now();
     setSyncStatus('synced','Synced · '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}));
-  } catch(e) { setSyncStatus('error','Sync failed'); showToast('⚠️ Load error: '+e.message); throw e; }
-  hideLoading();
+  } catch(e) {
+    setSyncStatus('error','Sync failed');
+    if (!silent) { showToast('⚠️ Load error: '+e.message); }
+    if (!silent) hideLoading();
+    throw e;
+  }
+  if (!silent) hideLoading();
 }
 
 // Narrows DB.transactions/bills/customers down to whichever godown is
@@ -1751,6 +1766,49 @@ function requireWarehouseForWrite(){
   return currentWarehouseFilter;
 }
 async function refreshData() { await loadAllData(); renderAll(); showToast('🔄 Refreshed'); }
+
+// ═══════════════════════════════════════
+//  AUTO-REFRESH — keeps this screen in step with what the OTHER godown
+//  saves, without anyone pressing Refresh.
+//    • Coming back to the tab → quiet refresh right away (if the data is
+//      more than a minute old).
+//    • While the tab stays open → quiet refresh every 5 minutes.
+//    • Never refreshes while a modal (entry form) is open, mid-save, or
+//      while the tab is hidden — a half-typed delivery is never disturbed.
+//  The manual Refresh button still works exactly as before.
+// ═══════════════════════════════════════
+const AUTO_REFRESH_MS = 5 * 60 * 1000;   // background cadence: 5 minutes
+const FOCUS_REFRESH_MIN_AGE_MS = 60 * 1000; // on-return refresh only if data is >1 min old
+let lastDataLoadAt = 0;
+let autoRefreshBusy = false;
+
+function anyModalOpen() {
+  return [...document.querySelectorAll('.modal-bg')].some(m=>m.classList.contains('open'));
+}
+
+async function autoRefresh(trigger) {
+  if (autoRefreshBusy) return;
+  if (document.hidden) return;                       // nobody is looking
+  if (!currentUser || !currentUser.role) return;     // not logged in yet
+  if (anyModalOpen()) return;                        // entry in progress — never disturb
+  autoRefreshBusy = true;
+  try {
+    await loadAllData({ silent:true });
+    lastDataLoadAt = Date.now();
+    renderAll();
+  } catch(e) {
+    // Quiet failure — the sync dot already shows it; next cycle retries.
+  }
+  autoRefreshBusy = false;
+}
+
+setInterval(()=>autoRefresh('timer'), AUTO_REFRESH_MS);
+document.addEventListener('visibilitychange', ()=>{
+  if (!document.hidden && Date.now() - lastDataLoadAt > FOCUS_REFRESH_MIN_AGE_MS) autoRefresh('return');
+});
+window.addEventListener('focus', ()=>{
+  if (Date.now() - lastDataLoadAt > FOCUS_REFRESH_MIN_AGE_MS) autoRefresh('return');
+});
 
 let editLogLoaded = false;
 function mapEditLogRows(rows) {
@@ -1933,6 +1991,9 @@ document.querySelectorAll('.modal-bg').forEach(bg=>bg.addEventListener('click',e
 //  BILL MODAL — new + edit
 // ═══════════════════════════════════════
 function openBillModal(type, billGroupToEdit) {
+  // Backstop for the edit-permission rule — the buttons are hidden for
+  // users, but a rule like this is never left to the UI alone.
+  if (billGroupToEdit && !canEditBillGroup(billGroupToEdit)) { showToast('⛔ Editing is switched off for your godown — ask your admin.'); return; }
   currentBillType = type;
   editingBillGroup = billGroupToEdit;
   currentSaveAttemptId = uid();
@@ -2543,7 +2604,7 @@ async function saveBill() {
   if (saveSucceeded && currentBillType === 'OUT') {
     try {
       const printWin = window.open('', '_blank', 'width=800,height=1000');
-      printOutwardBill(printWin, date, invoice, party, validRows, billedQty, suppliedQty, selectedBills);
+      printOutwardBill(printWin, date, invoice, party, validRows, billedQty, suppliedQty, selectedBills, getSelectedTransport());
     } catch(printErr) {
       console.warn('Print failed (bill was already saved successfully):', printErr);
     }
@@ -3008,10 +3069,11 @@ function reprintOutwardBill(billGroup) {
     totalBilled += (bill?.qty ?? supplied);
   });
 
-  printOutwardBill(printWin, first.date, first.deliveryRef || first.invoice, first.party, rows, totalBilled, totalSupplied, reconstructedBills);
+  printOutwardBill(printWin, first.date, first.deliveryRef || first.invoice, first.party, rows, totalBilled, totalSupplied, reconstructedBills,
+    { driver: first.driver || '', helpers: first.helpers || '' });
 }
 
-function printOutwardBill(win, date, invoice, party, rows, billedQty, suppliedQty, selectedBillsList) {
+function printOutwardBill(win, date, invoice, party, rows, billedQty, suppliedQty, selectedBillsList, transport) {
   if (!win) {
     showToast('⚠️ Pop-up blocked — allow pop-ups for this site to enable auto-print');
     return;
@@ -3108,6 +3170,8 @@ function printOutwardBill(win, date, invoice, party, rows, billedQty, suppliedQt
     <div class="meta">
       <div>Ref: <b>${invoice}</b></div>
       <div>Date: ${dateStr}</div>
+      ${transport && transport.driver ? `<div>Driver: <b>${transport.driver}</b></div>` : ''}
+      ${transport && transport.helpers ? `<div>Helper${transport.helpers.includes(',')?'s':''}: <b>${transport.helpers}</b></div>` : ''}
     </div>
   </div>
   ${sectionsHtml}
@@ -4189,7 +4253,7 @@ function renderWarehouses() {
   const tbody = document.getElementById('warehouses-body');
   if (!tbody) return;
   if (!DB.warehouses.length) {
-    tbody.innerHTML = `<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--rule-dark);">No warehouses yet — add one above.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--rule-dark);">No warehouses yet — add one above.</td></tr>`;
     return;
   }
   tbody.innerHTML = DB.warehouses.map(w => `
@@ -4202,10 +4266,33 @@ function renderWarehouses() {
           ${w.manualBills ? '🔓 Enabled' : '🔒 Disabled'}
         </button>
       </td>
+      <td style="padding:6px 8px;border-bottom:1px solid var(--rule);">
+        <button class="btn btn-ghost btn-sm" onclick="toggleUserEdit('${w.id}')"
+          title="May ${w.name} users edit their OWN entries? Deletes stay admin-only either way"
+          style="${w.userEdit ? 'color:#B45309;font-weight:600;' : 'color:var(--rule-dark);'}">
+          ${w.userEdit ? '🔓 Enabled' : '🔒 Disabled'}
+        </button>
+      </td>
       <td style="padding:6px 8px;border-bottom:1px solid var(--rule);" class="no-print">
         <button class="btn btn-ghost btn-sm" style="color:#B42318;" onclick="deleteWarehouseRow('${w.id}','${w.name.replace(/'/g,"\\'")}')">🗑 Remove</button>
       </td>
     </tr>`).join('');
+}
+
+// Admin permission switch: may this godown's users edit their own saved
+// entries? OFF = every correction goes through admin (deletes always do).
+async function toggleUserEdit(id) {
+  if (!isAdmin()) { showToast('⛔ Admin only'); return; }
+  const w = DB.warehouses.find(x=>x.id===id);
+  if (!w) return;
+  const newVal = !w.userEdit;
+  if (newVal && !confirm(`Allow ${w.name} users to EDIT their own entries?\n\nThey can only edit entries they created themselves. Deleting stays admin-only, and every edit is stamped and logged.`)) return;
+  try {
+    await gbUpdateRange('data','Warehouses', id, 3, [[newVal]]);
+    w.userEdit = newVal;
+    renderWarehouses();
+    showToast(newVal ? `🔓 User editing ENABLED for ${w.name}` : `🔒 User editing disabled for ${w.name}`);
+  } catch(e) { showToast('❌ ' + e.message); }
 }
 
 // Admin permission switch: may received bills be typed in by hand at this
@@ -5526,7 +5613,11 @@ function renderBillsReceived() {
       <td class="mono" style="text-align:right;">${b.value?'₹'+b.value.toLocaleString('en-IN'):'—'}</td>
       <td>${statusBadge}</td>
       <td class="admin-only" style="font-size:12px;">${b.warehouse||'—'}</td>
-      <td class="no-print">${b.status==='Pending'?`<button class="btn btn-ghost btn-sm" style="color:var(--low);border-color:var(--low);" onclick="deleteReceivedBill('${b.id}')">🗑 Remove</button>`:'—'}</td>
+      <td class="no-print">${
+        isAdmin()
+          ? `<button class="btn btn-edit btn-sm" onclick="adminEditBill('${b.id}')">✏️</button> <button class="btn btn-ghost btn-sm" style="color:var(--low);border-color:var(--low);" onclick="deleteReceivedBill('${b.id}')">🗑</button>`
+          : '—'
+      }</td>
     </tr>`;
   };
 
@@ -5734,17 +5825,147 @@ function exportMissingBillsExcel() {
   showToast('✅ Missing bills exported');
 }
 
-async function deleteReceivedBill(billId) {
-  if (!confirm('Remove this bill from received list?')) return;
+// ══════════════════════════════════════════
+//  ADMIN CORRECTION TOOLS — edit/delete on any entry, always audited.
+//  Every action writes a full before-picture into the Errors register,
+//  so nothing ever just vanishes (the Sheets-era problem this system
+//  was built to end). Deletes are admin-only.
+// ══════════════════════════════════════════
+
+// One audit row into the Errors register — kind + what + why.
+async function logAdminAction(kind, billNoText, detailsObj, reason) {
+  const row = [uid(), kind, billNoText, JSON.stringify(detailsObj||{}), '',
+               nowISO(), 'Resolved', currentUser.email, nowISO(), reason||''];
   try {
+    await gbAppend('data','Errors',[row]);
+    (DB.errors=DB.errors||[]).push({ id:row[0], kind, billNo:billNoText, details:detailsObj||{},
+      existingBillId:'', createdAt:row[5], status:'Resolved', resolvedBy:currentUser.email, resolvedAt:row[8], remarks:reason||'' });
+  } catch(e) { console.warn('audit log failed (action itself proceeded):', e); }
+}
+
+// Delete an ENTIRE delivery/receipt (all rows of its bill group).
+// Outward: linked bills revert to Pending and stock comes back up.
+// Inward: stock goes back down. Both fully audited.
+async function adminDeleteDelivery(billGroup) {
+  if (!isAdmin()) { showToast('⛔ Admin only'); return; }
+  const txns = (DB._allTransactions||[]).filter(t=>t.billGroup===billGroup);
+  if (!txns.length) { showToast('⚠️ Nothing found for this entry — refresh and try again.'); return; }
+  const type = txns[0].type;
+  const invoices = [...new Set(txns.map(t=>t.invoice).filter(Boolean))];
+  const totalQty = txns.reduce((s,t)=>s+Number(t.qty||0),0);
+  const wh = txns[0].warehouse || '—';
+  const ref = txns[0].deliveryRef || '';
+  const linkedBills = type==='OUT' ? (DB._allBills||[]).filter(b=>b.outwardBillGroup===billGroup) : [];
+  const itemLines = txns.slice(0,12).map(t=>{
+    const it = DB.items.find(i=>i.id===t.itemId);
+    return `  • ${it?it.name:t.itemId} — ${t.qty}`;
+  }).join('\n') + (txns.length>12?`\n  …and ${txns.length-12} more rows`:'');
+
+  const stockMsg = type==='OUT'
+    ? `Stock effect: ${wh} stock INCREASES by ${totalQty} (the outward is being erased).`
+    : `Stock effect: ${wh} stock DECREASES by ${totalQty} (the inward is being erased).`;
+  const billMsg = linkedBills.length
+    ? `\nLinked bill${linkedBills.length>1?'s':''} (${linkedBills.map(b=>b.billNo).join(', ')}) will go back to PENDING.`
+    : '';
+  if (!confirm(`🗑 DELETE this entire ${type==='OUT'?'outward delivery':'inward entry'}?\n\n${ref?`Delivery: ${ref}\n`:''}Bill(s): ${invoices.join(', ')||'—'}\nGodown: ${wh}\nRows: ${txns.length}, total qty ${totalQty}\n${itemLines}\n\n${stockMsg}${billMsg}\n\nThis is recorded in the Errors register with your name. Continue?`)) return;
+  const reason = prompt('Reason for deletion (recorded in the Errors register):');
+  if (reason === null) return;
+
+  try {
+    await logAdminAction(`Deleted ${type==='OUT'?'outward delivery':'inward entry'}`,
+      invoices.join(', '),
+      { billGroup, deliveryRef: ref, warehouse: wh, totalQty,
+        rows: txns.map(t=>({itemId:t.itemId, qty:t.qty, invoice:t.invoice, party:t.party, date:t.date})),
+        revertedBills: linkedBills.map(b=>b.billNo) },
+      reason);
+    // Revert linked bills to Pending BEFORE deleting rows — if anything
+    // fails midway, a Pending bill with rows still present is harmless,
+    // the other way round is not.
+    for (const b of linkedBills) {
+      await gbUpdateRange('data','Bills', b.id, 5, [['Pending','','']]);
+      b.status='Pending'; b.dispatchedAt=''; b.outwardBillGroup='';
+    }
+    await gbClearWhere('data','Transactions', 8, billGroup, 16);
+    DB._allTransactions = (DB._allTransactions||[]).filter(t=>t.billGroup!==billGroup);
+    showToast(`🗑 ${type==='OUT'?'Delivery':'Inward entry'} deleted — recorded in Errors`);
+    renderAll();
+  } catch(e) { showToast('❌ Delete failed: '+e.message); }
+}
+
+// Edit a received bill's number / customer / qty / value — with the same
+// duplicate protection as entry, and linked delivery rows renamed in step.
+async function adminEditBill(billId) {
+  if (!isAdmin()) { showToast('⛔ Admin only'); return; }
+  const b = (DB._allBills||[]).find(x=>x.id===billId);
+  if (!b) { showToast('⚠️ Bill not found — refresh and try again.'); return; }
+
+  const newNo = prompt('Bill number:', b.billNo);
+  if (newNo === null) return;
+  const cleanNo = newNo.trim();
+  if (!cleanNo) { showToast('Bill number cannot be empty.'); return; }
+  if (billDupKey(cleanNo) !== billDupKey(b.billNo)
+      && (DB._allBills||[]).some(x=>x.id!==billId && billDupKey(x.billNo)===billDupKey(cleanNo))) {
+    alert(`❌ ${cleanNo} already exists (any godown counts). Fix or remove that one first.`);
+    return;
+  }
+  const newCust = prompt('Customer:', b.customerName);
+  if (newCust === null) return;
+  const newQty = prompt('Billed qty:', b.qty);
+  if (newQty === null) return;
+  const newValue = prompt('Bill value (₹):', b.value||0);
+  if (newValue === null) return;
+
+  const changes = {};
+  if (cleanNo !== b.billNo) changes.billNo = { from:b.billNo, to:cleanNo };
+  if (newCust.trim() !== b.customerName) changes.customer = { from:b.customerName, to:newCust.trim() };
+  if (Number(newQty) !== Number(b.qty)) changes.qty = { from:b.qty, to:Number(newQty)||0 };
+  if (Number(newValue) !== Number(b.value||0)) changes.value = { from:b.value||0, to:Number(newValue)||0 };
+  if (!Object.keys(changes).length) { showToast('No changes.'); return; }
+
+  try {
+    await logAdminAction('Bill corrected', b.billNo, { billId, changes }, '');
+    await gbUpdateRange('data','Bills', billId, 1, [[cleanNo, newCust.trim(), Number(newQty)||0]]);
+    if (changes.value) await gbUpdateRange('data','Bills', billId, 10, [[Number(newValue)||0]]);
+    // If the number changed and deliveries already reference it, rename
+    // those rows too — the bill and its deliveries must never disagree.
+    if (changes.billNo) {
+      const linked = (DB._allTransactions||[]).filter(t=>t.invoice===b.billNo && t.warehouse===b.warehouse);
+      if (linked.length) {
+        await gbApiPost({ op:'batchUpdate', book:'data', sheet:'Transactions',
+          updates: linked.map(t=>({ id:t.id, startCol:3, values:[[cleanNo]] })) });
+        linked.forEach(t=>{ t.invoice = cleanNo; });
+      }
+    }
+    b.billNo = cleanNo; b.customerName = newCust.trim(); b.qty = Number(newQty)||0; b.value = Number(newValue)||0;
+    showToast('✏️ Bill corrected — recorded in Errors');
+    renderAll();
+  } catch(e) { showToast('❌ Edit failed: '+e.message); }
+}
+
+async function deleteReceivedBill(billId) {
+  if (!isAdmin()) { showToast('⛔ Removing bills is admin-only — ask your admin.'); return; }
+  const b = (DB._allBills||[]).find(x=>x.id===billId);
+  if (!b) { showToast('⚠️ Bill not found — refresh and try again.'); return; }
+  // Dispatched bills are admin-territory: deleting one leaves its delivery
+  // standing, so the admin is told exactly that before confirming.
+  if (b.status === 'Dispatched') {
+    if (!isAdmin()) { showToast('⛔ Only admin can remove a dispatched bill.'); return; }
+    const refTxn = (DB._allTransactions||[]).find(t=>t.billGroup===b.outwardBillGroup);
+    if (!confirm(`🗑 Remove DISPATCHED bill ${b.billNo} (${b.customerName}, ${b.warehouse})?\n\nIts outward delivery${refTxn?.deliveryRef?` (${refTxn.deliveryRef})`:''} stays in the register and keeps the old number on its rows — stock does NOT change.\n\nIf the whole delivery is wrong, delete the DELIVERY instead (🗑 in Outward Entries) — that also returns the stock.\n\nRecorded in the Errors register. Continue?`)) return;
+  } else {
+    if (!confirm(`Remove bill ${b.billNo} (${b.customerName}) from the received list?\n\nThis is recorded in the Errors register.`)) return;
+  }
+  try {
+    await logAdminAction('Bill removed', b.billNo,
+      { billId, customer:b.customerName, qty:b.qty, value:b.value, status:b.status, warehouse:b.warehouse }, '');
     await gbClearWhere('data','Bills',0,billId,7);
     // Remove from the master list too — DB.bills is rebuilt from
     // DB._allBills on every applyWarehouseScope(), so filtering only the
     // scoped copy would quietly resurrect the row on the next render.
-    DB._allBills = (DB._allBills||[]).filter(b=>b.id!==billId);
-    DB.bills = DB.bills.filter(b=>b.id!==billId);
-    showToast('🗑 Bill removed');
-    renderBillsReceived(); renderBillsPending(); updateBadges();
+    DB._allBills = (DB._allBills||[]).filter(x=>x.id!==billId);
+    DB.bills = DB.bills.filter(x=>x.id!==billId);
+    showToast('🗑 Bill removed — recorded in Errors');
+    renderAll();
   } catch(e) { showToast('❌ Error: '+e.message); }
 }
 
@@ -5818,6 +6039,7 @@ function renderDashBills(){
       <td class="no-print">
         ${canEditBill?`<button class="btn btn-edit btn-sm" onclick="openBillModal('${g.type}','${g.billGroup}')">✏️ Edit</button>`:'<span style="font-size:11px;color:var(--rule-dark)">—</span>'}
         ${edited && isAdmin() ?`<button class="btn btn-ghost btn-sm" style="margin-left:4px" onclick="showLogDetail('${g.billGroup}','${g.invoice}')">📝 Log</button>`:''}
+        ${isAdmin()?`<button class="btn btn-ghost btn-sm" style="color:var(--low);" title="Delete this whole entry (admin)" onclick="adminDeleteDelivery('${g.billGroup}')">🗑</button>`:''}
       </td>
     </tr>`;
   }).join('');
@@ -5842,7 +6064,7 @@ function renderInward(){
       <td>${t.party||'—'}</td>
       <td style="font-size:11px;color:var(--rule-dark)">${t.createdBy||'—'}</td>
       <td>${edited?'<span class="badge badge-edited">EDITED</span>':'<span class="badge badge-ok">OK</span>'}</td>
-      <td class="no-print">${canEditBill?`<button class="btn btn-edit btn-sm" onclick="openBillModal('IN','${t.billGroup}')">✏️ Edit</button>`:'—'}</td>
+      <td class="no-print">${canEditBill?`<button class="btn btn-edit btn-sm" onclick="openBillModal('IN','${t.billGroup}')">✏️ Edit</button>`:'—'}${isAdmin()?` <button class="btn btn-ghost btn-sm" style="color:var(--low);" title="Delete this whole inward entry (admin)" onclick="adminDeleteDelivery('${t.billGroup}')">🗑</button>`:''}</td>
     </tr>`;
   }).join('');
 }
@@ -5889,7 +6111,7 @@ function renderOutward(){
       <td>${r.party||'—'}</td>
       <td style="font-size:11px;color:var(--rule-dark)">${r.createdBy||'—'}</td>
       <td>${r.edited?'<span class="badge badge-edited">EDITED</span>':'<span class="badge badge-ok">OK</span>'}</td>
-      <td class="no-print">${r.canEditBill?`<button class="btn btn-edit btn-sm" onclick="openBillModal('OUT','${r.billGroup}')">✏️ Edit</button>`:''} <button class="btn btn-ghost btn-sm" onclick="reprintOutwardBill('${r.billGroup}')">🖨️ Print</button></td>
+      <td class="no-print">${r.canEditBill?`<button class="btn btn-edit btn-sm" onclick="openBillModal('OUT','${r.billGroup}')">✏️ Edit</button>`:''} <button class="btn btn-ghost btn-sm" onclick="reprintOutwardBill('${r.billGroup}')">🖨️ Print</button>${isAdmin()?` <button class="btn btn-ghost btn-sm" style="color:var(--low);" title="Delete this whole delivery (admin)" onclick="adminDeleteDelivery('${r.billGroup}')">🗑</button>`:''}</td>
     </tr>`).join('');
 }
 
@@ -5956,7 +6178,7 @@ function renderOutwardByDelivery(){
       <td class="mono" style="text-align:right;">${d.totalBilled}</td>
       <td class="mono" style="text-align:right;font-weight:600;color:var(--outward);">${d.totalSupplied}</td>
       <td class="mono admin-only" style="text-align:right;">₹${d.totalValue.toLocaleString('en-IN')}</td>
-      <td class="no-print" onclick="event.stopPropagation();"><button class="btn btn-ghost btn-sm" onclick="reprintOutwardBill('${d.key}')">🖨️ Print</button></td>
+      <td class="no-print" onclick="event.stopPropagation();"><button class="btn btn-ghost btn-sm" onclick="reprintOutwardBill('${d.key}')">🖨️ Print</button>${isAdmin()?` <button class="btn btn-ghost btn-sm" style="color:var(--low);" title="Delete this whole delivery (admin)" onclick="adminDeleteDelivery('${d.rows[0].billGroup}')">🗑</button>`:''}</td>
     </tr>`;
     if (expanded) {
       d.invoices.forEach(inv=>{
@@ -6250,7 +6472,7 @@ function searchItems(q) {
     const isLow = item.minLevel > 0 && stock <= item.minLevel;
     const alreadyAdded = gridRows.find(r=>r.itemId===item.id);
     return `<div class="search-item" data-id="${item.id}" data-idx="${idx}"
-      onclick="selectSearchItem('${item.id}', '${item.name}')"
+      onclick="selectSearchItem(this.dataset.id)"
       onmouseenter="highlightSearchItem(${idx})"
       style="padding:8px 14px;cursor:pointer;border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:10px;${alreadyAdded?'opacity:0.5;':''}"
     >
@@ -6275,9 +6497,13 @@ function highlightSearchItem(idx) {
   });
 }
 
-function selectSearchItem(itemId, name) {
+function selectSearchItem(itemId) {
+  // Name is looked up from the master, never passed through HTML — item
+  // names with quotes (e.g. 18 " PF) used to break the click handler.
+  const item = DB.items.find(i=>i.id===itemId);
+  if (!item) return;
   searchSelectedItemId = itemId;
-  document.getElementById('b-item-search').value = name;
+  document.getElementById('b-item-search').value = item.name;
   document.getElementById('search-dropdown').style.display = 'none';
   // Auto-add to grid immediately
   addGridRow();
@@ -6301,9 +6527,7 @@ function searchKeyNav(e) {
   } else if (e.key === 'Enter') {
     e.preventDefault();
     if (searchHighlightIdx >= 0 && items[searchHighlightIdx]) {
-      const id = items[searchHighlightIdx].dataset.id;
-      const name = items[searchHighlightIdx].querySelector('div div').textContent;
-      selectSearchItem(id, name);
+      selectSearchItem(items[searchHighlightIdx].dataset.id);
     } else {
       addGridRow();
     }
